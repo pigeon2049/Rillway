@@ -110,4 +110,76 @@ public class WorkflowApiControllerIntegrationTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data").isArray());
     }
+
+    @Test
+    @DisplayName("API测试: 7张底表管理与根据配置表 Prompt 一键生成 DAG 流程")
+    void testAdminApisAndFlowGeneration() throws Exception {
+        // 1. 保存单据绑定配置
+        Map<String, Object> bindingBody = Map.of(
+                "id", "cfg_admin_test_01",
+                "businessType", "reimbursement",
+                "tableName", "biz_reimbursement",
+                "statusColumn", "status",
+                "approvedValue", "APPROVED",
+                "rejectedValue", "REJECTED",
+                "processPrompt", "员工报销申请：1. 小于1000元部门经理审批；2. 大于1000元需部门经理初审并由财务总监审批。"
+        );
+
+        mockMvc.perform(post("/api/admin/binding-config")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(bindingBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        // 2. 根据配置项 Prompt 一键由大模型生成流程图
+        mockMvc.perform(post("/api/admin/binding-config/cfg_admin_test_01/generate-flow"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.generatedDefinitionId").exists())
+                .andExpect(jsonPath("$.data.nodeCount").isNumber());
+
+        // 3. 查询 binding-config 列表
+        mockMvc.perform(get("/api/admin/binding-config"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data").isArray());
+
+        // 4. 新增与查询 AI 配置
+        Map<String, Object> aiConfigBody = Map.of(
+                "id", "ai_deepseek_v3",
+                "providerName", "DeepSeek",
+                "baseUrl", "https://api.deepseek.com/v1",
+                "apiKey", "sk-test-mock",
+                "modelName", "deepseek-chat",
+                "temperature", 0.1
+        );
+        mockMvc.perform(post("/api/admin/ai-config")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(aiConfigBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        mockMvc.perform(get("/api/admin/ai-config"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data").isArray());
+
+        // 5. 查询与清除决策缓存
+        mockMvc.perform(get("/api/admin/resolution-cache"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/admin/resolution-cache"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        // 6. 查询实例与任务
+        mockMvc.perform(get("/api/admin/instances"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        mockMvc.perform(get("/api/admin/tasks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+    }
 }
