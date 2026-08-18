@@ -88,10 +88,33 @@ rillway:
 
 ---
 
-### Step 3: Connect Enterprise Org & Personnel (`IdentityService` SPI)
+### Step 3: Connect Enterprise Organization & Personnel (Two Options)
 
-When interpreting approval policies, LLMs need to know "who is the applicant's manager" or "who is the department head".
-Simply implement the `IdentityService` interface in your Spring Boot application. The LLM will **automatically query your organization and user tables via Tool Calling**:
+#### 🌟 Option A (Recommended · Zero-Code): Directly Register Entity Classes (`OrgEntityRegistry`)
+
+**Zero custom SQL, Mappers, or Service implementations required!** Simply register your existing User, Department, Role, or Post entity classes as a Spring Bean. Rillway's **reflective DDL Introspector (`EntityClassIntrospector`)** automatically extracts table names, column mappings, foreign keys, and Swagger/OpenAPI `@Schema` annotations, feeding them directly to the LLM for tool-driven evaluation:
+
+```java
+@Configuration
+public class WorkflowOrgConfig {
+
+    @Bean
+    public OrgEntityRegistry orgEntityRegistry() {
+        return OrgEntityRegistry.builder()
+                .userEntity(SystemUserDO.class)      // User / Employee Entity
+                .deptEntity(SystemDeptDO.class)      // Department Entity
+                .roleEntity(SystemRoleDO.class)      // Role Entity
+                .postEntity(SystemPostDO.class)      // Post / Position Entity (Optional)
+                .build();
+    }
+}
+```
+
+---
+
+#### Option B: Implement `IdentityService` SPI Interface (For Remote Microservice RPC)
+
+If your system queries a centralized user center via Feign / gRPC / RPC, you can implement the `IdentityService` interface:
 
 ```java
 @Service
@@ -129,7 +152,7 @@ public class EnterpriseIdentityService implements IdentityService {
         return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
     }
 
-    // 4. Query user IDs by role or post (e.g. 'FINANCE_DIRECTOR')
+    // 4. Query user IDs by role or post (e.g. 'ROLE_HRBP')
     @Override
     public List<String> getUsersByRole(String roleCode) {
         return userMapper.selectUserIdsByRole(roleCode);
@@ -146,7 +169,7 @@ public class EnterpriseIdentityService implements IdentityService {
     }
 }
 ```
-> 💡 **Out-of-the-Box Fallback**: If no custom `IdentityService` is registered, Rillway automatically uses `DefaultIdentityService` for painless unit testing and local development.
+> 💡 **Out-of-the-Box Fallback**: If neither option is configured, Rillway automatically uses `DefaultIdentityService` for painless unit testing and local development.
 
 ---
 
@@ -375,6 +398,23 @@ public class PurchaseOrderEventListener {
   // Escalates to department manager or admin when direct leader is missing
   Optional<String> leader = identityService.getEffectiveDirectLeader(userId);
   ```
+
+### 7. Entity Class Schema Introspection & LLM Tool Calling DAG Compiler
+
+#### Architecture Workflow:
+```text
+ 1. Register Entity Classes   2. Reflective DDL Introspection      3. Empower LLM Tool Calling
+┌─────────────────┐      ┌─────────────────────────┐      ┌────────────────────────┐
+│ SystemUserDO    │ ───► │ EntityClassIntrospector │ ───► │ buildWorkflowDag       │
+│ SystemDeptDO    │      │ Auto-extracts tables,   │      │ LLM outputs typed DAG  │
+│ SystemRoleDO    │      │ columns, comments, FKs  │      │ START -> RULE -> HUMAN │
+└─────────────────┘      └─────────────────────────┘      └────────────────────────┘
+```
+
+#### Key Advantages:
+1. **Zero Coding Overhead**: No need to write repetitive CRUD queries or custom data mappers—just pass entity classes;
+2. **Zero Hardcoding**: LLM calls the standard OpenAI Tool Calling interface `buildWorkflowDag`, dynamically generating clean, closed-loop DAG topologies based on business fields (`day`, `amount`, `type`) and organizational roles (`deptName`, `leaderUserId`, `roleCode`);
+3. **Seamless Frontend Preview**: The generated `ProcessDefinition` DAG can be directly rendered in UI designers or dynamically predicted via `ProcessPreviewer`.
 
 ---
 
