@@ -1,0 +1,102 @@
+# ===================================================================
+# Rillway AI 原生流程引擎 Example 标准配置示例 (Spring Boot 3.x)
+# ===================================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rillway-example-service
+
+  # -----------------------------------------------------------------
+  # 数据源配置 (开箱即用支持 H2 内存库，可按需切换为 MySQL / PostgreSQL)
+  # -----------------------------------------------------------------
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:rillway_demo_db;DB_CLOSE_DELAY=-1;MODE=MySQL
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  # -----------------------------------------------------------------
+  # SQL 初始化脚本 (自动加载业务示例表与组织架构脱敏数据)
+  # -----------------------------------------------------------------
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-hrm-example.sql
+
+# -------------------------------------------------------------------
+# MyBatis-Plus 配置 (适配业务实体与驼峰命名映射)
+# -------------------------------------------------------------------
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# -------------------------------------------------------------------
+# Rillway AI 原生流程引擎核心配置
+# -------------------------------------------------------------------
+rillway:
+  # 是否开启 Rillway 流程引擎
+  enabled: true
+  # 引擎持久化表前缀 (默认: rillway_)
+  table-prefix: rillway_
+  # 启动时是否自动探测并初始化 Rillway 引擎内置表结构 (7 张核心底表)
+  auto-init-ddl: true
+
+  # -----------------------------------------------------------------
+  # 智能决策分支隔离缓存 (Resolution Cache)
+  # -----------------------------------------------------------------
+  resolution-cache:
+    # 是否启用大模型决策结果缓存（大幅降低 LLM 调用成本并达到毫秒级响应）
+    enabled: true
+    # 默认决策缓存有效期 (例如: 7d, 24h)
+    default-ttl: 7d
+
+  # -----------------------------------------------------------------
+  # AI 大模型意图编译器与智能审批人解析配置 (LLM Client)
+  # -----------------------------------------------------------------
+  ai:
+    # 是否启用 AI 智能能力
+    enabled: true
+    # OpenAI 兼容协议 Base URL (支持 DeepSeek, OpenAI, 智谱, Qwen, Ollama, vLLM 等)
+    base-url: https://api.deepseek.com/v1
+    # 大模型 API Key (生产环境推荐通过环境变量 RILLWAY_AI_API_KEY 注入)
+    api-key: ${RILLWAY_AI_API_KEY:sk-your-deepseek-api-key}
+    # 调用的模型名称
+    model: deepseek-chat
+    # 采样温度 (流程编译器与审批决策推荐较低温度 0.0 - 0.2，保证输出确定性)
+    temperature: 0.1
+    # 单次最大 Token 生成数
+    max-tokens: 2048
+    # HTTP 请求超时时间 (单位: 秒)
+    timeout-seconds: 60
+
+    # ---------------------------------------------------------------
+    # AI 调用全链路追溯与审计 Sink (Trace)
+    # ---------------------------------------------------------------
+    trace:
+      # 是否启用 AI Prompt 与 Tool Calling 全链路审计追踪
+      enabled: true
+      # 追溯日志存储介质: jdbc (持久化到 rillway_ai_trace 表) | memory (内存环形缓冲区)
+      storage: jdbc
+
+# -------------------------------------------------------------------
+# 日志级别配置
+# -------------------------------------------------------------------
+logging:
+  level:
+    root: INFO
+    com.wegongdu.rillway: DEBUG
+    org.springframework.jdbc.core: DEBUG

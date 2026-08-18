@@ -1,7 +1,12 @@
 package com.wegongdu.rillway.example;
 
 import com.wegongdu.rillway.agent.spi.AgentRegistry;
+import com.wegongdu.rillway.core.identity.OrgEntityRegistry;
 import com.wegongdu.rillway.example.agent.PurchaseReviewAgent;
+import com.wegongdu.rillway.example.hrm.SystemDeptDO;
+import com.wegongdu.rillway.example.hrm.SystemPostDO;
+import com.wegongdu.rillway.example.hrm.SystemRoleDO;
+import com.wegongdu.rillway.example.hrm.SystemUserDO;
 import com.wegongdu.rillway.policy.model.PolicyDocument;
 import com.wegongdu.rillway.policy.provider.InMemoryPolicyProvider;
 import com.wegongdu.rillway.policy.spi.PolicyProvider;
@@ -37,5 +42,15 @@ public class PurchaseApplication {
                 ));
             }
         };
+    }
+
+    @Bean
+    public OrgEntityRegistry orgEntityRegistry() {
+        return OrgEntityRegistry.builder()
+                .userEntity(SystemUserDO.class)
+                .deptEntity(SystemDeptDO.class)
+                .roleEntity(SystemRoleDO.class)
+                .postEntity(SystemPostDO.class)
+                .build();
     }
 }

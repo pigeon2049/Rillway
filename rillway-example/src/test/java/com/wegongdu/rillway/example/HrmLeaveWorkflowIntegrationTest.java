@@ -375,7 +375,7 @@ public class HrmLeaveWorkflowIntegrationTest {
         // 2. 自省解析校验
         var userMeta = EntityClassIntrospector.introspect(SystemUserDO.class);
         assertNotNull(userMeta);
-        assertEquals("system_user", userMeta.tableName());
+        assertEquals("system_users", userMeta.tableName());
 
         // 3. 构建带实体类自省的 LlmIntentInterpreter
         LlmIntentInterpreter autoInterpreter = new LlmIntentInterpreter(llmClient, orgRegistry);
