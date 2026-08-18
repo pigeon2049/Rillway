@@ -5,6 +5,7 @@ import com.wegongdu.rillway.core.context.ProcessContext;
 import com.wegongdu.rillway.core.decision.ApproveDecision;
 import com.wegongdu.rillway.core.definition.ProcessDefinition;
 import com.wegongdu.rillway.core.identity.IdentityService;
+import com.wegongdu.rillway.core.instance.ProcessInstance;
 import com.wegongdu.rillway.core.model.BindingConfig;
 import com.wegongdu.rillway.core.model.ProcessStatus;
 import com.wegongdu.rillway.core.model.Task;
@@ -134,5 +135,54 @@ class ZeroCodeBindingIntegrationTest {
         );
 
         assertThat(finalStatus).isEqualTo("APPROVED");
+    }
+
+    @Test
+    @DisplayName("should start workflow purely from prompt configured in binding config table")
+    void should_start_workflow_purely_from_prompt_in_config_table() {
+        String orderId = "PO_20260818_PROMPT_01";
+
+        jdbcTemplate.update("INSERT INTO biz_purchase_order (id, title, amount, status) VALUES (?, ?, ?, ?)",
+                orderId, "自然语言配置流程测试", new BigDecimal("3200"), "DRAFT");
+
+        // 1. Config in table with natural language prompt
+        bindingConfigRepository.save(BindingConfig.ofPrompt(
+                "cfg-prompt-po",
+                "prompt_po",
+                "员工提交采购申请：5000元以下直属经理审批；5000元以上由采购Agent根据企业采购制度审核；超过50000元升级总经理审批",
+                "biz_purchase_order",
+                "status",
+                "APPROVED",
+                "REJECTED"
+        ));
+
+        // 2. Business code only starts by businessType and entityId - NO hardcoded ProcessDefinition!
+        ProcessContext context = ProcessContext.builder()
+                .initiator("Alice")
+                .variable("amount", new BigDecimal("3200"))
+                .build();
+
+        ProcessInstance instance = processEngine.startByBusinessType("prompt_po", orderId, context);
+
+        assertThat(instance).isNotNull();
+        assertThat(instance.status()).isEqualTo(ProcessStatus.WAITING_FOR_DECISION);
+        assertThat(instance.currentNodeId()).isEqualTo("manager-approval");
+
+        // 3. Complete approval task
+        List<Task> tasks = taskService.findTasksByBusinessKey("prompt_po:" + orderId);
+        assertThat(tasks).isNotEmpty();
+
+        taskService.completeTask(
+                tasks.get(0).id(),
+                ApproveDecision.of(Actor.HumanActor.of("Manager_Bob"), "批准")
+        );
+
+        // 4. Verify entity status automatically updated
+        String status = jdbcTemplate.queryForObject(
+                "SELECT status FROM biz_purchase_order WHERE id = ?",
+                String.class,
+                orderId
+        );
+        assertThat(status).isEqualTo("APPROVED");
     }
 }

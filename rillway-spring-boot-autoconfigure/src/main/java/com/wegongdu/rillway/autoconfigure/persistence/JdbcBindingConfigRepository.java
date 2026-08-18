@@ -29,15 +29,16 @@ public class JdbcBindingConfigRepository implements BindingConfigRepository {
 
         String sql = """
             INSERT INTO rillway_binding_config (
-                id, business_type, process_definition_id, table_name, primary_key_column,
+                id, business_type, process_definition_id, process_prompt, table_name, primary_key_column,
                 status_column, approved_value, rejected_value, running_value, enabled
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         jdbcTemplate.update(
                 sql,
                 config.id(),
                 config.businessType(),
                 config.processDefinitionId(),
+                config.processPrompt(),
                 config.tableName(),
                 config.primaryKeyColumn(),
                 config.statusColumn(),
@@ -73,10 +74,16 @@ public class JdbcBindingConfigRepository implements BindingConfigRepository {
     private static class BindingConfigRowMapper implements RowMapper<BindingConfig> {
         @Override
         public BindingConfig mapRow(ResultSet rs, int rowNum) throws SQLException {
+            String prompt = null;
+            try {
+                prompt = rs.getString("process_prompt");
+            } catch (Exception ignored) {}
+
             return new BindingConfig(
                     rs.getString("id"),
                     rs.getString("business_type"),
                     rs.getString("process_definition_id"),
+                    prompt,
                     rs.getString("table_name"),
                     rs.getString("primary_key_column"),
                     rs.getString("status_column"),

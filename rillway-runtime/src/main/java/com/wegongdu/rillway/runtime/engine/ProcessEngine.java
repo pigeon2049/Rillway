@@ -16,5 +16,9 @@ public interface ProcessEngine {
 
     ProcessInstance start(ProcessDefinition definition, String businessKey, ProcessContext context);
 
+    default ProcessInstance startByBusinessType(String businessType, String entityId, ProcessContext context) {
+        throw new UnsupportedOperationException("startByBusinessType is not supported by this engine implementation");
+    }
+
     ProcessInstance resume(ProcessInstance instance, Decision decision);
 }

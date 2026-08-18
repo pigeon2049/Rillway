@@ -32,6 +32,7 @@
 
 - 🧠 **AI-Native & Intent-Driven**：支持通过人类大白话自然语言表达业务意图与审批人指派，由大模型（LLM）+ 组织架构 Tool Calling 自主推理完成指派，彻底告别死板复杂的伪表达式语法。
 - 🏢 **零代码单据接入与状态自动回写 (Zero-Code Binding)**：配置表驱动，流程审批通过/驳回时引擎自动回写业务物理表状态字段，业务开发者无需编写任何 Listener 或 Mapper 代码。
+- 📢 **流程事件监听与多渠道通知联动 (Process Event & Notification)**：原生桥接 Spring 事件总线，业务开发通过标准 `@EventListener` 即可拦截流程发起、节点流转、审批通过/驳回，轻松对接飞书、企微、钉钉、邮件及下游 MQ / ERP。
 - 👥 **全维组织架构身份画像 (Multi-Dimensional UserProfile SPI)**：提供标准人事 SPI，让流程和大模型无缝感知发起人的部门、岗位、职务、职级与直属领导，支持跨部门差异化智能审批流转。
 - ⚡ **成功决策缓存与条件分支隔离 (ResolutionCache & 0 Token Fast-Path)**：
   - **组织架构快照核验**：记录双方人员部门/岗位指纹与 7 天有效期，未变动时触发 0 Token 毫秒级极速复用；
@@ -133,94 +134,132 @@ public enum AgentAuthority {
 </dependency>
 ```
 
-### 2. 定义业务流程（以采购审批为例）
+---
 
-**业务意图**：
-- 员工提交采购申请；
-- **5000 元以下**：由直属部门经理审批；
-- **5000 元以上**：由 `purchase-review-agent` 根据企业采购制度审核；
-  - 采购 Agent 拥有 `DELEGATED` 权限，可执行 `approve` / `reject`；
-  - **金额超过 50,000 元**：必须 `escalate` 到总经理人工审批；
-  - Agent 无法做出确切判断时：`fallback` 到采购经理人工复核。
+### 2. 方式一（首选推荐）：零代码配置表 + 自然语言意图驱动
+
+> 💡 **核心优势**：流程变动（如修改审批阈值、调整审核角色）**无需修改任何 Java 代码，无需发版重启**，仅需在数据库或管理后台更新一段 Prompt！
+
+#### Step 1: 在配置表 (`rillway_binding_config`) 中填入大白话意图
+
+```sql
+INSERT INTO rillway_binding_config (
+    id, 
+    business_type, 
+    process_prompt, 
+    table_name, 
+    status_column, 
+    approved_value, 
+    rejected_value, 
+    enabled
+) VALUES (
+    'cfg_purchase_01',
+    'purchase_order',
+    '员工提交采购申请：
+     1. 金额小于 5000 元时，由申请人直属部门经理审批；
+     2. 金额在 5000 到 50,000 元且有发票时，由 AI 采购合规 Agent 依据企业采购制度直接自动审批；
+     3. 金额大于 50,000 元时，必须升级至总经理人工审批；
+     4. 任何无法确定或缺少发票情况，由采购经理人工复核。',
+    'biz_purchase_order',
+    'status',
+    'APPROVED',
+    'REJECTED',
+    true
+);
+```
+
+#### Step 2: 业务系统一行代码发起审批
+
+业务代码**无需声明任何 ProcessDefinition**，直接按 `businessType` 提交，引擎自动通过 AI 意图解析器驱动流转：
 
 ```java
-ProcessDefinition definition = ProcessDefinition.builder("purchase-process")
+@Autowired
+private ProcessEngine processEngine;
+
+// 1. 组装业务表单数据
+ProcessContext context = ProcessContext.builder()
+    .initiator("Alice")
+    .variable("item", "高性能研发服务器")
+    .variable("amount", new BigDecimal("12000"))
+    .variable("hasInvoice", true)
+    .build();
+
+// 2. 一行代码按单据类型发起审批流！
+ProcessInstance instance = processEngine.startByBusinessType(
+    "purchase_order",   // 对应配置表 business_type
+    "PO_20260818001",   // 业务单据唯一主键 ID
+    context
+);
+```
+
+#### Step 3: 人工待办审批与全自动状态回写
+
+```java
+@Autowired
+private TaskService taskService;
+
+// 查询当前经理待办
+List<Task> pendingTasks = taskService.findPendingTasks(currentUserId, currentUserRoles);
+
+// 用户审批通过
+taskService.completeTask(
+    taskId,
+    ApproveDecision.of(Actor.HumanActor.of(currentUserId, "DEPARTMENT_MANAGER"), "核验无误，同意采购")
+);
+
+// 🎉 审批完成后，Rillway 自动将 biz_purchase_order 对应行的 status 回写为 'APPROVED'！
+```
+
+---
+
+### 3. 方式二（进阶极客）：Java Fluent DSL 编程式定义
+
+适合用于确定性本地单元测试，或对微秒级静态拓扑有强约束的场景：
+
+```java
+ProcessDefinition definition = ProcessDefinition.builder("purchase-approval-workflow")
     .name("企业采购合规审批流程")
-    .startNode("start")
+    .startNode("start", "提交申请")
     .ruleNode("amount-check", rule -> rule
-        .when(ctx -> ctx.getDecimal("amount").compareTo(new BigDecimal("5000")) < 0, "manager-approval")
+        .name("金额阈值初筛")
+        .when("低于5000由经理审批", ctx -> {
+            BigDecimal amt = ctx.getDecimal("amount");
+            return amt != null && amt.compareTo(new BigDecimal("5000")) < 0;
+        }, "manager-approval")
         .otherwise("agent-review")
     )
     .humanNode("manager-approval", human -> human
+        .name("直属经理审批")
         .assigneeRole("DEPARTMENT_MANAGER")
-        .thenTo("end")
     )
     .agentNode("agent-review", agent -> agent
+        .name("采购智能审核")
         .agentId("purchase-review-agent")
         .authority(AgentAuthority.DELEGATED)
         .policies("PURCHASE_POLICY_2026", "INVOICE_STANDARD")
         .allowedDecisions(DecisionType.APPROVE, DecisionType.REJECT, DecisionType.ESCALATE)
-        .fallbackNode("procurement-manager-approval")
+        .fallbackNodeId("procurement-manager-approval")
         .on(DecisionType.APPROVE, "end")
         .on(DecisionType.REJECT, "end")
         .on(DecisionType.ESCALATE, "general-manager-approval")
     )
     .humanNode("procurement-manager-approval", human -> human
+        .name("采购经理人工复核 (Fallback)")
         .assigneeRole("PROCUREMENT_MANAGER")
-        .thenTo("end")
     )
     .humanNode("general-manager-approval", human -> human
+        .name("总经理审批 (Escalated)")
         .assigneeRole("GENERAL_MANAGER")
-        .thenTo("end")
     )
-    .endNode("end")
-    .build();
-```
-
-### 3. 启动流程与待办审批 (极简无感)
-
-#### 发起审批并绑定业务单据 ID (businessKey)
-```java
-@Autowired
-private ProcessEngine processEngine;
-
-// 1. 组装表单数据
-ProcessContext context = ProcessContext.builder()
-    .initiator("Alice")
-    .variable("applicant", "爱丽丝")
-    .variable("item", "高性能研发服务器")
-    .variable("amount", new BigDecimal("12000"))
+    .endNode("end", "审批结束")
+    .edge("start", "amount-check")
+    .edge("manager-approval", "end")
+    .edge("procurement-manager-approval", "end")
+    .edge("general-manager-approval", "end")
     .build();
 
-// 2. 发起流程并无感持久化 (自动创建 rillway_instance，遇人工节点自动生成 rillway_task)
-ProcessInstance instance = processEngine.start(
-    purchaseDefinition, 
-    "purchase_order:PO_20260818001", // 业务单据唯一标识
-    context
-);
-```
-
-#### 查询当前用户的待办任务列表 (TaskService)
-```java
-@Autowired
-private TaskService taskService;
-
-// 查询当前用户的待办 (按 userId 与所拥有角色自动精确过滤)
-List<Task> pendingTasks = taskService.findPendingTasks(currentUserId, currentUserRoles);
-for (Task task : pendingTasks) {
-    System.out.println("待办ID: " + task.id());
-    System.out.println("单据编号: " + task.businessKey());
-    System.out.println("审批节点: " + task.nodeName());
-}
-```
-
-#### 用户审批通过 / 驳回
-```java
-// 一行代码完成：加载实例 -> 驱动流程 -> 任务标为已办 -> 更新数据库与审计轨迹
-taskService.completeTask(
-    taskId,
-    ApproveDecision.of(Actor.HumanActor.of(currentUserId, "DEPARTMENT_MANAGER"), "核验无误，同意采购")
-);
+// 启动编程式流程
+processEngine.start(definition, "purchase_order:PO_20260818001", context);
 ```
 
 ---
@@ -255,6 +294,62 @@ SET status = 'APPROVED'
 WHERE id = 'PO_20260818001';
 ```
 **业务开发者无需编写任何监听器或 Mapper 更新代码，单据状态完全自动化流转！**
+
+---
+
+## 📢 流程事件监听与通知联动 (Event Listener)
+
+对于状态回写之外的**横切关注点**（如：给飞书/企微/钉钉发待办卡片、流程结束时调用外部 ERP 或发送 MQ 领域事件），Rillway 原生集成了 Spring 事件机制。业务开发人员只需使用标准 `@EventListener` 即可轻松监听全生命周期事件：
+
+```java
+@Component
+public class PurchaseWorkflowNotificationListener {
+
+    @Autowired
+    private FeishuNotificationService feishuService;
+    @Autowired
+    private ErpIntegrationService erpService;
+
+    /**
+     * 1. 流程发起时：通知发起人已进入审批流程
+     */
+    @EventListener
+    public void onProcessStarted(ProcessEvent.ProcessStartedEvent event) {
+        feishuService.sendText(event.initiator(), 
+            "您的单据 [" + event.businessKey() + "] 已成功提交审批。");
+    }
+
+    /**
+     * 2. 到达某节点时：给对应审批人/角色发送待办提醒卡片
+     */
+    @EventListener
+    public void onNodeEntered(ProcessEvent.NodeEnteredEvent event) {
+        if (event.assigneeRole() != null) {
+            feishuService.sendApprovalCard(
+                event.assigneeRole(), 
+                "【待办提醒】单据 [" + event.businessKey() + "] 等待您审批", 
+                event.processInstanceId()
+            );
+        }
+    }
+
+    /**
+     * 3. 流程结束时（审批通过 / 驳回）：发送结果通知并触发下游系统联动
+     */
+    @EventListener
+    public void onProcessCompleted(ProcessEvent.ProcessCompletedEvent event) {
+        if (event.isSuccess()) {
+            feishuService.sendSuccessNotice(event.businessKey(), "审批已全部通过！");
+            // 触发下游微服务或 MQ 领域事件
+            erpService.createPurchaseOrder(event.businessKey());
+        } else {
+            feishuService.sendRejectNotice(event.businessKey(), "单据审批已被驳回。");
+        }
+    }
+}
+```
+
+> 💡 **提示**：除了 Spring `@EventListener` 注解外，非 Spring 环境或编程式开发者也可直接实现 `ProcessEventListener` 接口进行事件订阅。
 
 ---
 

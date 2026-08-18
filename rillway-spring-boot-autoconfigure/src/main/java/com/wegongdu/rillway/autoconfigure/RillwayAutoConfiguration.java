@@ -16,6 +16,7 @@ import com.wegongdu.rillway.audit.sink.AuditSink;
 import com.wegongdu.rillway.audit.sink.InMemoryAuditSink;
 import com.wegongdu.rillway.audit.sink.NoOpAuditSink;
 import com.wegongdu.rillway.autoconfigure.binding.EntityStatusAutoUpdater;
+import com.wegongdu.rillway.autoconfigure.event.SpringApplicationEventPublisherBridge;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcBindingConfigRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
@@ -311,23 +312,50 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public SpringApplicationEventPublisherBridge springApplicationEventPublisherBridge(
+            org.springframework.context.ApplicationEventPublisher applicationEventPublisher
+    ) {
+        return new SpringApplicationEventPublisherBridge(applicationEventPublisher);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.wegongdu.rillway.runtime.event.ProcessEventPublisher processEventPublisher(
+            List<com.wegongdu.rillway.core.event.ProcessEventListener> listeners
+    ) {
+        return new com.wegongdu.rillway.runtime.event.CompositeProcessEventPublisher(listeners);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ProcessEngine processEngine(
             List<NodeExecutor<? extends Node>> executors,
             ProcessValidator validator,
             AuditSink auditSink,
+            com.wegongdu.rillway.runtime.event.ProcessEventPublisher processEventPublisher,
             ProcessInstanceRepository instanceRepository,
             TaskRepository taskRepository,
             ExecutionHistoryRepository historyRepository,
-            HumanAssigneeResolver assigneeResolver
+            HumanAssigneeResolver assigneeResolver,
+            BindingConfigRepository bindingConfigRepository,
+            ObjectProvider<IntentInterpreter> intentInterpreterProvider
     ) {
+        IntentInterpreter intentInterpreter = intentInterpreterProvider.getIfAvailable();
+        java.util.function.Function<String, com.wegongdu.rillway.core.definition.ProcessDefinition> promptCompiler = (intentInterpreter != null)
+                ? prompt -> intentInterpreter.interpret(com.wegongdu.rillway.ai.intent.ProcessIntent.of(prompt))
+                : null;
+
         return new StandardProcessEngine(
                 executors,
                 validator,
                 auditSink,
+                processEventPublisher,
                 instanceRepository,
                 taskRepository,
                 historyRepository,
-                assigneeResolver
+                assigneeResolver,
+                bindingConfigRepository,
+                promptCompiler
         );
     }
 }

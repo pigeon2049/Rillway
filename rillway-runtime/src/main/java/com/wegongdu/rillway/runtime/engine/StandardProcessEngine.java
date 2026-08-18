@@ -33,6 +33,7 @@ import com.wegongdu.rillway.runtime.repository.TaskRepository;
 import com.wegongdu.rillway.runtime.repository.memory.InMemoryExecutionHistoryRepository;
 import com.wegongdu.rillway.runtime.repository.memory.InMemoryProcessInstanceRepository;
 import com.wegongdu.rillway.runtime.repository.memory.InMemoryTaskRepository;
+import com.wegongdu.rillway.runtime.event.ProcessEventPublisher;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,10 +49,13 @@ public class StandardProcessEngine implements ProcessEngine {
     private final List<NodeExecutor<? extends Node>> executors;
     private final ProcessValidator validator;
     private final AuditSink auditSink;
+    private final ProcessEventPublisher eventPublisher;
     private final ProcessInstanceRepository instanceRepository;
     private final TaskRepository taskRepository;
     private final ExecutionHistoryRepository historyRepository;
     private final HumanAssigneeResolver assigneeResolver;
+    private final com.wegongdu.rillway.runtime.repository.BindingConfigRepository bindingConfigRepository;
+    private final java.util.function.Function<String, ProcessDefinition> promptCompiler;
     private final Map<String, ProcessDefinition> definitionCache = new ConcurrentHashMap<>();
 
     public StandardProcessEngine(
@@ -62,8 +66,8 @@ public class StandardProcessEngine implements ProcessEngine {
             TaskRepository taskRepository,
             ExecutionHistoryRepository historyRepository
     ) {
-        this(executors, validator, auditSink, instanceRepository, taskRepository, historyRepository, (node, ctx) ->
-                HumanAssigneeResolver.ResolvedAssignee.of(node.assigneeUser(), node.assigneeRole(), node.candidateUsers(), node.candidateRoles()));
+        this(executors, validator, auditSink, null, instanceRepository, taskRepository, historyRepository, (node, ctx) ->
+                HumanAssigneeResolver.ResolvedAssignee.of(node.assigneeUser(), node.assigneeRole(), node.candidateUsers(), node.candidateRoles()), null, null);
     }
 
     public StandardProcessEngine(
@@ -75,14 +79,45 @@ public class StandardProcessEngine implements ProcessEngine {
             ExecutionHistoryRepository historyRepository,
             HumanAssigneeResolver assigneeResolver
     ) {
+        this(executors, validator, auditSink, null, instanceRepository, taskRepository, historyRepository, assigneeResolver, null, null);
+    }
+
+    public StandardProcessEngine(
+            List<NodeExecutor<? extends Node>> executors,
+            ProcessValidator validator,
+            AuditSink auditSink,
+            ProcessEventPublisher eventPublisher,
+            ProcessInstanceRepository instanceRepository,
+            TaskRepository taskRepository,
+            ExecutionHistoryRepository historyRepository,
+            HumanAssigneeResolver assigneeResolver
+    ) {
+        this(executors, validator, auditSink, eventPublisher, instanceRepository, taskRepository, historyRepository, assigneeResolver, null, null);
+    }
+
+    public StandardProcessEngine(
+            List<NodeExecutor<? extends Node>> executors,
+            ProcessValidator validator,
+            AuditSink auditSink,
+            ProcessEventPublisher eventPublisher,
+            ProcessInstanceRepository instanceRepository,
+            TaskRepository taskRepository,
+            ExecutionHistoryRepository historyRepository,
+            HumanAssigneeResolver assigneeResolver,
+            com.wegongdu.rillway.runtime.repository.BindingConfigRepository bindingConfigRepository,
+            java.util.function.Function<String, ProcessDefinition> promptCompiler
+    ) {
         this.executors = executors != null ? List.copyOf(executors) : List.of();
         this.validator = validator != null ? validator : new StandardProcessValidator();
         this.auditSink = auditSink != null ? auditSink : NoOpAuditSink.INSTANCE;
+        this.eventPublisher = eventPublisher != null ? eventPublisher : ProcessEventPublisher.NOOP;
         this.instanceRepository = instanceRepository != null ? instanceRepository : new InMemoryProcessInstanceRepository();
         this.taskRepository = taskRepository != null ? taskRepository : new InMemoryTaskRepository();
         this.historyRepository = historyRepository != null ? historyRepository : new InMemoryExecutionHistoryRepository();
         this.assigneeResolver = assigneeResolver != null ? assigneeResolver : (node, ctx) ->
                 HumanAssigneeResolver.ResolvedAssignee.of(node.assigneeUser(), node.assigneeRole(), node.candidateUsers(), node.candidateRoles());
+        this.bindingConfigRepository = bindingConfigRepository;
+        this.promptCompiler = promptCompiler;
     }
 
     public static Builder builder() {
@@ -93,6 +128,43 @@ public class StandardProcessEngine implements ProcessEngine {
         if (definition != null) {
             definitionCache.put(definition.id(), definition);
         }
+    }
+
+    @Override
+    public ProcessInstance startByBusinessType(String businessType, String entityId, ProcessContext context) {
+        Objects.requireNonNull(businessType, "businessType must not be null");
+        Objects.requireNonNull(entityId, "entityId must not be null");
+
+        if (bindingConfigRepository == null) {
+            throw new IllegalStateException("BindingConfigRepository is not configured in ProcessEngine");
+        }
+
+        var configOpt = bindingConfigRepository.findByBusinessType(businessType);
+        if (configOpt.isEmpty()) {
+            throw new IllegalArgumentException("No enabled BindingConfig found for businessType: " + businessType);
+        }
+
+        var config = configOpt.get();
+        String definitionId = config.processDefinitionId();
+        ProcessDefinition definition = definitionCache.get(definitionId);
+
+        if (definition == null && config.processPrompt() != null && !config.processPrompt().isBlank() && promptCompiler != null) {
+            definition = promptCompiler.apply(config.processPrompt());
+            if (definition != null) {
+                registerDefinition(definition);
+            }
+        }
+
+        if (definition == null) {
+            definition = definitionCache.get(definitionId);
+        }
+
+        if (definition == null) {
+            throw new IllegalStateException("ProcessDefinition [" + definitionId + "] not found or compiled for businessType: " + businessType);
+        }
+
+        String businessKey = entityId.contains(":") ? entityId : (businessType + ":" + entityId);
+        return start(definition, businessKey, context);
     }
 
     @Override
@@ -115,7 +187,8 @@ public class StandardProcessEngine implements ProcessEngine {
         ProcessInstance instance = ProcessInstance.create(definition.id(), businessKey, startNodeId, context);
         instanceRepository.save(instance);
 
-        // 3. Publish Start Event
+        Instant startTimestamp = Instant.now();
+        // 3. Publish Start Event to AuditSink and EventPublisher
         auditSink.publish(new AuditEvents.ProcessStarted(
                 null,
                 instance.id(),
@@ -123,7 +196,18 @@ public class StandardProcessEngine implements ProcessEngine {
                 startNodeId,
                 context.initiator(),
                 context,
-                Instant.now()
+                startTimestamp
+        ));
+
+        eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.ProcessStartedEvent(
+                null,
+                instance.id(),
+                definition.id(),
+                businessKey,
+                startNodeId,
+                context.initiator(),
+                context,
+                startTimestamp
         ));
 
         // 4. Run Execution Loop
@@ -164,10 +248,15 @@ public class StandardProcessEngine implements ProcessEngine {
                 currentInstance = currentInstance.failed(errMsg);
                 instanceRepository.update(currentInstance);
                 auditSink.publish(new AuditEvents.ProcessFailed(null, currentInstance.id(), definition.id(), currentNodeId, errMsg, null));
+                eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.ProcessFailedEvent(
+                        null, currentInstance.id(), definition.id(), currentInstance.businessKey(), currentNodeId, errMsg, Instant.now()));
                 break;
             }
 
             Instant enteredAt = Instant.now();
+            String assigneeRole = (currentNode instanceof HumanNode hn) ? hn.assigneeRole() : null;
+            String assigneeUser = (currentNode instanceof HumanNode hn) ? hn.assigneeUser() : null;
+
             auditSink.publish(new AuditEvents.NodeEntered(
                     null,
                     currentInstance.id(),
@@ -177,6 +266,18 @@ public class StandardProcessEngine implements ProcessEngine {
                     currentNode.type(),
                     enteredAt
             ));
+            eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.NodeEnteredEvent(
+                    null,
+                    currentInstance.id(),
+                    definition.id(),
+                    currentInstance.businessKey(),
+                    currentNode.id(),
+                    currentNode.name(),
+                    currentNode.type(),
+                    assigneeRole,
+                    assigneeUser,
+                    enteredAt
+            ));
 
             NodeExecutor<Node> executor = findExecutor(currentNode);
             if (executor == null) {
@@ -184,6 +285,8 @@ public class StandardProcessEngine implements ProcessEngine {
                 currentInstance = currentInstance.failed(errMsg);
                 instanceRepository.update(currentInstance);
                 auditSink.publish(new AuditEvents.ProcessFailed(null, currentInstance.id(), definition.id(), currentNode.id(), errMsg, null));
+                eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.ProcessFailedEvent(
+                        null, currentInstance.id(), definition.id(), currentInstance.businessKey(), currentNode.id(), errMsg, Instant.now()));
                 break;
             }
 
@@ -200,6 +303,8 @@ public class StandardProcessEngine implements ProcessEngine {
                 historyRepository.save(currentInstance.id(), failedRecord);
                 instanceRepository.update(currentInstance);
                 auditSink.publish(new AuditEvents.ProcessFailed(null, currentInstance.id(), definition.id(), currentNode.id(), errMsg, null));
+                eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.ProcessFailedEvent(
+                        null, currentInstance.id(), definition.id(), currentInstance.businessKey(), currentNode.id(), errMsg, Instant.now()));
                 break;
             }
 
@@ -235,6 +340,7 @@ public class StandardProcessEngine implements ProcessEngine {
                 currentInstance = currentInstance.withHistoryRecord(completedRecord);
                 historyRepository.save(currentInstance.id(), completedRecord);
 
+                Instant completedAt = Instant.now();
                 auditSink.publish(new AuditEvents.NodeCompleted(
                         null,
                         currentInstance.id(),
@@ -244,7 +350,19 @@ public class StandardProcessEngine implements ProcessEngine {
                         currentNode.type(),
                         actor,
                         result.decision(),
-                        Instant.now()
+                        completedAt
+                ));
+                eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.NodeCompletedEvent(
+                        null,
+                        currentInstance.id(),
+                        definition.id(),
+                        currentInstance.businessKey(),
+                        currentNode.id(),
+                        currentNode.name(),
+                        currentNode.type(),
+                        actor,
+                        result.decision(),
+                        completedAt
                 ));
 
                 if (result.decision() != null) {
@@ -275,13 +393,24 @@ public class StandardProcessEngine implements ProcessEngine {
                 currentInstance = currentInstance.withStatusAndNode(finalStatus, currentNode.id());
                 instanceRepository.update(currentInstance);
 
+                Instant completedAt = Instant.now();
                 auditSink.publish(new AuditEvents.ProcessCompleted(
                         null,
                         currentInstance.id(),
                         definition.id(),
                         currentNode.id(),
                         isSuccess,
-                        Instant.now()
+                        completedAt
+                ));
+                eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.ProcessCompletedEvent(
+                        null,
+                        currentInstance.id(),
+                        definition.id(),
+                        currentInstance.businessKey(),
+                        currentNode.id(),
+                        isSuccess,
+                        finalStatus,
+                        completedAt
                 ));
                 break;
             } else if (result.status() == NodeExecutionResult.Status.FAILED) {
@@ -291,6 +420,8 @@ public class StandardProcessEngine implements ProcessEngine {
                 historyRepository.save(currentInstance.id(), failedRecord);
                 instanceRepository.update(currentInstance);
                 auditSink.publish(new AuditEvents.ProcessFailed(null, currentInstance.id(), definition.id(), currentNode.id(), errMsg, null));
+                eventPublisher.publish(new com.wegongdu.rillway.core.event.ProcessEvent.ProcessFailedEvent(
+                        null, currentInstance.id(), definition.id(), currentInstance.businessKey(), currentNode.id(), errMsg, Instant.now()));
                 break;
             }
         }
@@ -312,6 +443,7 @@ public class StandardProcessEngine implements ProcessEngine {
         private final List<NodeExecutor<? extends Node>> executors = new ArrayList<>();
         private ProcessValidator validator;
         private AuditSink auditSink;
+        private ProcessEventPublisher eventPublisher;
         private ProcessInstanceRepository instanceRepository;
         private TaskRepository taskRepository;
         private ExecutionHistoryRepository historyRepository;
@@ -338,6 +470,11 @@ public class StandardProcessEngine implements ProcessEngine {
 
         public Builder auditSink(AuditSink auditSink) {
             this.auditSink = auditSink;
+            return this;
+        }
+
+        public Builder eventPublisher(ProcessEventPublisher eventPublisher) {
+            this.eventPublisher = eventPublisher;
             return this;
         }
 
@@ -372,6 +509,7 @@ public class StandardProcessEngine implements ProcessEngine {
                     executors,
                     validator,
                     auditSink,
+                    eventPublisher,
                     instanceRepository,
                     taskRepository,
                     historyRepository,

@@ -89,6 +89,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
                     id VARCHAR(64) PRIMARY KEY,
                     business_type VARCHAR(64) NOT NULL,
                     process_definition_id VARCHAR(64) NOT NULL,
+                    process_prompt TEXT,
                     table_name VARCHAR(128) NOT NULL,
                     primary_key_column VARCHAR(64) NOT NULL,
                     status_column VARCHAR(64) NOT NULL,
