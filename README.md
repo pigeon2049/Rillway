@@ -345,25 +345,28 @@ public class SystemIdentityAdapter implements IdentityService {
 
 ---
 
-### 4. 成功流程决策缓存与组织快照核验 (Snapshot-based Cache with TTL)
+### 4. 成功流程决策缓存与条件分支隔离 (Snapshot-based Cache with Branch Isolation)
 
-为了大幅节省大模型 Token 成本并提升审批流转性能，Rillway 实现了**基于组织架构快照与 TTL 有效期的决策缓存机制**（`rillway_resolution_cache`）：
+针对提示词中包含**业务条件分支**的场景（例如：*“请假大于3天由总经理审批，否则部门负责人审批”*），Rillway 引入了**条件分支指纹（`condition_branch_key`）槽位隔离机制**：
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 1. 首次决策：大模型 Tool Calling 推理，记录发起人与审批人的组织快照     │
-│    • 记录: (initiator_dept_id, initiator_post_code,                     │
-│             resolved_dept_id, resolved_post_code, expires_at 7天有效)  │
-│ 2. 再次执行：在有效期内发起同类单据时触发 0 Token 极速通道              │
-│ 3. 客观核验：毫秒级调用 IdentityService 比对双方部门/岗位是否变更      │
-│    • 双方组织快照未变 -> 0 Token 消耗，2ms 极速返回！                   │
-│    • 发生调岗/离职/变更 -> 自动识别失效，触发大模型重新推理并自愈更新快照│
+│  提示词: "如果请假天数大于3天由总经理审批，否则由部门负责人审批"        │
+│                                                                        │
+│  • Alice 请假 1 天 (leaveDays=1)                                       │
+│    -> 提取分支: leaveDays<=3，指派部门主管，写入槽位 [leaveDays<=3]    │
+│  • Bob 请假 5 天 (leaveDays=5)                                         │
+│    -> 提取分支: leaveDays>3，绝不误用 1 天的缓存！指派总经理并独立缓存 │
+│  • Alice 再次请假 2 天 -> 0 Token 命中槽位 [leaveDays<=3] (部门主管)   │
+│  • Bob 再次请假 10 天  -> 0 Token 命中槽位 [leaveDays>3] (总经理)       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **自动建表 `rillway_resolution_cache`**：记录流程提示词指纹、双方人员部门/岗位组织快照、`expires_at` 有效期、`hit_count`；
-- **90%+ Token 节省**：同部门员工高频提交的日常审批在有效期内直接命中缓存；
-- **客观绝对准确**：不依赖任何脆弱的 Prompt 关键词硬编码，纯粹通过客观的组织人事快照比对，自动感知人员调岗变动。
+- **分支槽位隔离**：表单数据不同条件分支落入不同的缓存槽位，彻底杜绝小额/短假单缓存污染大额/长假单的问题；
+- **90%+ Token 节省**：同分支单据在 7 天有效期内且人员部门未变动时直接 0 Token 毫秒级复用；
+- **企业最佳实践推荐**：
+  - **显式流程规则分流**：对于硬性制度红线（如报销额度、假期间隔），推荐直接在流程图中使用 `.edge("start", "gm-approval", ctx -> ctx.getInt("days") > 3)`，可视化度与可解释性最高；
+  - **AI 动态分支隔离**：对于自然语言动态策略，Rillway 自动计算分支指纹安全隔离。
 
 ---
 

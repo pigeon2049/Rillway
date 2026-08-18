@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * JDBC implementation of ResolutionCacheRepository with snapshot and TTL support.
+ * JDBC implementation of ResolutionCacheRepository with branch fingerprint isolation.
  */
 public class JdbcResolutionCacheRepository implements ResolutionCacheRepository {
 
@@ -34,7 +34,7 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
         // Delete existing entry with same key attributes if any
         String deleteSql = """
             DELETE FROM rillway_resolution_cache
-            WHERE definition_id = ? AND node_id = ? AND prompt_hash = ?
+            WHERE definition_id = ? AND node_id = ? AND prompt_hash = ? AND condition_branch_key = ?
             AND ((initiator_dept_id IS NULL AND ? IS NULL) OR initiator_dept_id = ?)
             AND ((initiator_post_code IS NULL AND ? IS NULL) OR initiator_post_code = ?)
         """;
@@ -43,6 +43,7 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
                 cache.definitionId(),
                 cache.nodeId(),
                 cache.promptHash(),
+                cache.conditionBranchKey(),
                 cache.initiatorDeptId(),
                 cache.initiatorDeptId(),
                 cache.initiatorPostCode(),
@@ -51,12 +52,12 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
 
         String insertSql = """
             INSERT INTO rillway_resolution_cache (
-                id, definition_id, node_id, prompt_hash,
+                id, definition_id, node_id, prompt_hash, condition_branch_key,
                 initiator_user_id, initiator_dept_id, initiator_post_code,
                 resolved_user_id, resolved_dept_id, resolved_post_code, resolved_role,
                 candidate_users_json, candidate_roles_json, hit_count,
                 expires_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         jdbcTemplate.update(
                 insertSql,
@@ -64,6 +65,7 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
                 cache.definitionId(),
                 cache.nodeId(),
                 cache.promptHash(),
+                cache.conditionBranchKey(),
                 cache.initiatorUserId(),
                 cache.initiatorDeptId(),
                 cache.initiatorPostCode(),
@@ -81,10 +83,18 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
     }
 
     @Override
-    public Optional<ResolutionCache> findMatch(String definitionId, String nodeId, String promptHash, String departmentId, String postCode) {
+    public Optional<ResolutionCache> findMatch(
+            String definitionId,
+            String nodeId,
+            String promptHash,
+            String conditionBranchKey,
+            String departmentId,
+            String postCode
+    ) {
+        String safeBranchKey = conditionBranchKey != null ? conditionBranchKey : "DEFAULT";
         String sql = """
             SELECT * FROM rillway_resolution_cache
-            WHERE definition_id = ? AND node_id = ? AND prompt_hash = ?
+            WHERE definition_id = ? AND node_id = ? AND prompt_hash = ? AND condition_branch_key = ?
             AND ((initiator_dept_id IS NULL AND ? IS NULL) OR initiator_dept_id = ?)
             AND ((initiator_post_code IS NULL AND ? IS NULL) OR initiator_post_code = ?)
         """;
@@ -94,6 +104,7 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
                 definitionId,
                 nodeId,
                 promptHash,
+                safeBranchKey,
                 departmentId,
                 departmentId,
                 postCode,
@@ -145,6 +156,7 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
                     rs.getString("definition_id"),
                     rs.getString("node_id"),
                     rs.getString("prompt_hash"),
+                    rs.getString("condition_branch_key"),
                     rs.getString("initiator_user_id"),
                     rs.getString("initiator_dept_id"),
                     rs.getString("initiator_post_code"),

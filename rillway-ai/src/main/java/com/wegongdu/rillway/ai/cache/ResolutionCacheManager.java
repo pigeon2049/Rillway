@@ -18,7 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Manages decision cache matching, organizational snapshot verification with TTL, and zero-token fast-path.
+ * Manages decision cache matching with condition branch isolation, organizational snapshot verification, and TTL.
  */
 public class ResolutionCacheManager {
 
@@ -37,13 +37,14 @@ public class ResolutionCacheManager {
     }
 
     /**
-     * Checks if a valid cached decision snapshot exists and verifies its current accuracy
-     * against IdentityService (both initiator's and approver's current department and post).
+     * Checks if a valid cached decision snapshot exists under the specific condition branch
+     * and verifies its current accuracy against IdentityService.
      */
     public Optional<HumanAssigneeResolver.ResolvedAssignee> findValidAssignee(
             String definitionId,
             String nodeId,
             String prompt,
+            String conditionBranchKey,
             UserProfile currentInitiator,
             IdentityService identityService
     ) {
@@ -54,9 +55,10 @@ public class ResolutionCacheManager {
         String promptHash = computePromptHash(prompt);
         String initiatorDeptId = currentInitiator != null ? currentInitiator.departmentId() : null;
         String initiatorPostCode = currentInitiator != null ? currentInitiator.postCode() : null;
+        String safeBranchKey = conditionBranchKey != null ? conditionBranchKey : "DEFAULT";
 
         Optional<ResolutionCache> cacheOpt = cacheRepository.findMatch(
-                definitionId, nodeId, promptHash, initiatorDeptId, initiatorPostCode
+                definitionId, nodeId, promptHash, safeBranchKey, initiatorDeptId, initiatorPostCode
         );
 
         if (cacheOpt.isEmpty()) {
@@ -67,8 +69,8 @@ public class ResolutionCacheManager {
         boolean verified = verifySnapshotAccuracy(currentInitiator, cached, identityService);
 
         if (verified) {
-            log.info("ResolutionCache HIT [0 Token]: Node [{}] matched cached assignee [{}] (Hits: {}, Valid until: {})",
-                    nodeId, cached.resolvedUserId(), cached.hitCount() + 1, cached.expiresAt());
+            log.info("ResolutionCache HIT [0 Token]: Node [{}], Branch [{}] matched cached assignee [{}] (Hits: {}, Valid until: {})",
+                    nodeId, safeBranchKey, cached.resolvedUserId(), cached.hitCount() + 1, cached.expiresAt());
             cacheRepository.save(cached.incrementHit());
             return Optional.of(HumanAssigneeResolver.ResolvedAssignee.of(
                     cached.resolvedUserId(),
@@ -77,20 +79,21 @@ public class ResolutionCacheManager {
                     cached.candidateRoles()
             ));
         } else {
-            log.warn("ResolutionCache INVALIDATED (Expired or organizational profile changed). Node [{}], stale assignee [{}]",
-                    nodeId, cached.resolvedUserId());
+            log.warn("ResolutionCache INVALIDATED (Expired or organizational profile changed). Node [{}], Branch [{}], stale assignee [{}]",
+                    nodeId, safeBranchKey, cached.resolvedUserId());
             cacheRepository.delete(cached.id());
             return Optional.empty();
         }
     }
 
     /**
-     * Records a newly resolved decision snapshot with initiator/approver organizational fingerprints and TTL.
+     * Records a newly resolved decision snapshot under the specific condition branch.
      */
     public void recordSuccessfulResolution(
             String definitionId,
             String nodeId,
             String prompt,
+            String conditionBranchKey,
             UserProfile initiatorProfile,
             HumanAssigneeResolver.ResolvedAssignee resolved,
             IdentityService identityService
@@ -100,6 +103,7 @@ public class ResolutionCacheManager {
         }
 
         String promptHash = computePromptHash(prompt);
+        String safeBranchKey = conditionBranchKey != null ? conditionBranchKey : "DEFAULT";
         String initiatorUserId = initiatorProfile != null ? initiatorProfile.userId() : null;
         String initiatorDeptId = initiatorProfile != null ? initiatorProfile.departmentId() : null;
         String initiatorPostCode = initiatorProfile != null ? initiatorProfile.postCode() : null;
@@ -120,6 +124,7 @@ public class ResolutionCacheManager {
                 .definitionId(definitionId)
                 .nodeId(nodeId)
                 .promptHash(promptHash)
+                .conditionBranchKey(safeBranchKey)
                 .initiatorUserId(initiatorUserId)
                 .initiatorDeptId(initiatorDeptId)
                 .initiatorPostCode(initiatorPostCode)
@@ -136,16 +141,10 @@ public class ResolutionCacheManager {
                 .build();
 
         cacheRepository.save(cache);
-        log.info("ResolutionCache RECORDED for Node [{}] -> Assignee [{}], Dept [{}], TTL [{} days]",
-                nodeId, resolved.assigneeUser(), resolvedDeptId, defaultTtl.toDays());
+        log.info("ResolutionCache RECORDED for Node [{}] Branch [{}] -> Assignee [{}], Dept [{}], TTL [{} days]",
+                nodeId, safeBranchKey, resolved.assigneeUser(), resolvedDeptId, defaultTtl.toDays());
     }
 
-    /**
-     * Objective verification:
-     * 1. TTL has not expired.
-     * 2. Initiator's department & post have not changed.
-     * 3. Approver still exists and their department & post have not changed.
-     */
     private boolean verifySnapshotAccuracy(
             UserProfile currentInitiator,
             ResolutionCache cached,

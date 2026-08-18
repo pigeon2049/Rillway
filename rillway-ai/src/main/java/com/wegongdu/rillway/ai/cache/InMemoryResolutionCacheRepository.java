@@ -8,7 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory thread-safe implementation of ResolutionCacheRepository.
+ * In-memory thread-safe implementation of ResolutionCacheRepository with branch fingerprint isolation.
  */
 public class InMemoryResolutionCacheRepository implements ResolutionCacheRepository {
 
@@ -22,6 +22,7 @@ public class InMemoryResolutionCacheRepository implements ResolutionCacheReposit
                     c.definitionId().equals(cache.definitionId()) &&
                     c.nodeId().equals(cache.nodeId()) &&
                     c.promptHash().equals(cache.promptHash()) &&
+                    Objects.equals(c.conditionBranchKey(), cache.conditionBranchKey()) &&
                     Objects.equals(c.initiatorDeptId(), cache.initiatorDeptId()) &&
                     Objects.equals(c.initiatorPostCode(), cache.initiatorPostCode())
             );
@@ -30,11 +31,20 @@ public class InMemoryResolutionCacheRepository implements ResolutionCacheReposit
     }
 
     @Override
-    public Optional<ResolutionCache> findMatch(String definitionId, String nodeId, String promptHash, String departmentId, String postCode) {
+    public Optional<ResolutionCache> findMatch(
+            String definitionId,
+            String nodeId,
+            String promptHash,
+            String conditionBranchKey,
+            String departmentId,
+            String postCode
+    ) {
+        String safeBranchKey = conditionBranchKey != null ? conditionBranchKey : "DEFAULT";
         return storage.values().stream()
                 .filter(c -> c.definitionId().equals(definitionId) &&
                              c.nodeId().equals(nodeId) &&
                              c.promptHash().equals(promptHash) &&
+                             Objects.equals(c.conditionBranchKey(), safeBranchKey) &&
                              Objects.equals(c.initiatorDeptId(), departmentId) &&
                              Objects.equals(c.initiatorPostCode(), postCode))
                 .findFirst();

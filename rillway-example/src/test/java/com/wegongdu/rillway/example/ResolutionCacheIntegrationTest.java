@@ -98,7 +98,7 @@ class ResolutionCacheIntegrationTest {
         assertThat(aliceTasks).anyMatch(t -> key1.equals(t.businessKey()));
 
         Optional<ResolutionCache> cacheRecord = resolutionCacheRepository.findMatch(
-                "dept-head-approval", "dept-head-approval", promptHash, "DEPT_RD", "SENIOR_DEV"
+                "dept-head-approval", "dept-head-approval", promptHash, "DEFAULT", "DEPT_RD", "SENIOR_DEV"
         );
         assertThat(cacheRecord).isPresent();
         assertThat(cacheRecord.get().resolvedUserId()).isEqualTo("Director_David");
@@ -114,7 +114,7 @@ class ResolutionCacheIntegrationTest {
         assertThat(bobTasks).anyMatch(t -> key2.equals(t.businessKey()));
 
         Optional<ResolutionCache> updatedCache = resolutionCacheRepository.findMatch(
-                "dept-head-approval", "dept-head-approval", promptHash, "DEPT_RD", "SENIOR_DEV"
+                "dept-head-approval", "dept-head-approval", promptHash, "DEFAULT", "DEPT_RD", "SENIOR_DEV"
         );
         assertThat(updatedCache).isPresent();
         assertThat(updatedCache.get().hitCount()).isGreaterThanOrEqualTo(1);
@@ -143,7 +143,7 @@ class ResolutionCacheIntegrationTest {
         assertThat(newDirectorTasks).anyMatch(t -> key3.equals(t.businessKey()));
 
         Optional<ResolutionCache> finalCache = resolutionCacheRepository.findMatch(
-                "dept-head-approval", "dept-head-approval", promptHash, "DEPT_RD", "SENIOR_DEV"
+                "dept-head-approval", "dept-head-approval", promptHash, "DEFAULT", "DEPT_RD", "SENIOR_DEV"
         );
         assertThat(finalCache).isPresent();
         assertThat(finalCache.get().resolvedUserId()).isEqualTo("Director_NewDavid");

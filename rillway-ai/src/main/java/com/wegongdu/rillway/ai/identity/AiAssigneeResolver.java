@@ -1,5 +1,6 @@
 package com.wegongdu.rillway.ai.identity;
 
+import com.wegongdu.rillway.ai.branch.BranchConditionExtractor;
 import com.wegongdu.rillway.ai.cache.InMemoryResolutionCacheRepository;
 import com.wegongdu.rillway.ai.cache.ResolutionCacheManager;
 import com.wegongdu.rillway.ai.llm.FakeLlmClient;
@@ -19,7 +20,7 @@ import java.util.Optional;
 
 /**
  * AI-native human assignee resolver powered by LLMs, UserProfiles, organizational Tool Calling,
- * and Snapshot-based ResolutionCache for zero-token execution.
+ * and Condition-Branch Isolated ResolutionCache for zero-token execution.
  */
 public class AiAssigneeResolver implements HumanAssigneeResolver {
 
@@ -66,11 +67,15 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             String initiator = context != null && context.initiator() != null ? context.initiator() : "default_user";
             UserProfile initiatorProfile = identityService.getUserProfile(initiator).orElse(null);
 
-            // 1. Fast-Path: Check valid organizational snapshot decision cache (0 Token)
+            // Compute condition branch fingerprint from context variables (e.g. leaveDays>3 vs leaveDays<=3)
+            String branchKey = BranchConditionExtractor.computeBranchKey(targetPrompt, context);
+
+            // 1. Fast-Path: Check valid condition-branch isolated decision cache (0 Token)
             Optional<ResolvedAssignee> cachedOpt = cacheManager.findValidAssignee(
                     node.id(),
                     node.id(),
                     targetPrompt,
+                    branchKey,
                     initiatorProfile,
                     identityService
             );
@@ -80,7 +85,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             }
 
             // 2. Slow-Path: Resolve with standard LLM Tool Calling loop
-            ResolvedAssignee newlyResolved = executeLlmToolCallingLoop(targetPrompt, context, initiatorProfile);
+            ResolvedAssignee newlyResolved = executeLlmToolCallingLoop(targetPrompt, context, initiatorProfile, branchKey);
             if (newlyResolved.assigneeUser() != null) {
                 assigneeUser = newlyResolved.assigneeUser();
             }
@@ -94,13 +99,14 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
                 candidateRoles.addAll(newlyResolved.candidateRoles());
             }
 
-            // 3. Record successful snapshot into cache with TTL for future zero-token execution
+            // 3. Record successful snapshot into cache isolated by branchKey for future zero-token execution
             ResolvedAssignee finalResult = ResolvedAssignee.of(assigneeUser, assigneeRole, candidateUsers, candidateRoles);
             if (assigneeUser != null || assigneeRole != null || !candidateUsers.isEmpty()) {
                 cacheManager.recordSuccessfulResolution(
                         node.id(),
                         node.id(),
                         targetPrompt,
+                        branchKey,
                         initiatorProfile,
                         finalResult,
                         identityService
@@ -114,9 +120,14 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
     }
 
     /**
-     * Standard LLM Tool Calling loop without any hardcoded prompt guessing.
+     * Standard LLM Tool Calling loop.
      */
-    private ResolvedAssignee executeLlmToolCallingLoop(String prompt, ProcessContext context, UserProfile initiatorProfile) {
+    private ResolvedAssignee executeLlmToolCallingLoop(
+            String prompt,
+            ProcessContext context,
+            UserProfile initiatorProfile,
+            String branchKey
+    ) {
         String initiator = initiatorProfile != null ? initiatorProfile.userId() : (context != null ? context.initiator() : "default_user");
 
         List<LlmClient.ToolDefinition> availableTools = List.of(
@@ -129,12 +140,11 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
         );
 
         String systemPrompt = """
-            You are an AI-Native organizational workflow dispatcher.
-            Analyze the user's intent and use the provided tools to query the organization structure.
-            Once you determine the appropriate approver(s), reply with a clear decision.
+            You are an AI-Native organizational workflow dispatcher with condition branch understanding.
+            Evaluate any conditions in the prompt against context variables (e.g. leaveDays, amount) and use organizational tools to find the right approver.
             """;
 
-        String userPrompt = "Initiator: " + initiator + ", Prompt: " + prompt + ", Variables: " + (context != null ? context.variables() : "{}");
+        String userPrompt = "Initiator: " + initiator + ", Prompt: " + prompt + ", Variables: " + (context != null ? context.variables() : "{}") + ", Branch: " + branchKey;
 
         LlmClient.LlmResponse response = llmClient.chat(systemPrompt, userPrompt, availableTools);
 
@@ -148,7 +158,6 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
                 Object toolOutput = executeSingleTool(call, initiator);
                 toolResults.add(new LlmClient.ToolResult(call.callId(), call.toolName(), toolOutput));
 
-                // Direct resolution extraction from standard tool calls
                 if (toolOutput instanceof String uid) {
                     resolvedUser = uid;
                 } else if (toolOutput instanceof Optional<?> opt && opt.isPresent()) {
@@ -156,10 +165,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
                     if (val instanceof String s) {
                         resolvedUser = s;
                     } else if (val instanceof UserProfile up) {
-                        // User profile queried, can be used for further decision
-                        if (up.directLeaderId() != null) {
-                            resolvedUser = up.directLeaderId();
-                        }
+                        if (up.directLeaderId() != null) resolvedUser = up.directLeaderId();
                     }
                 } else if (toolOutput instanceof List<?> list) {
                     for (Object item : list) {
@@ -168,27 +174,34 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
                 }
             }
 
-            // Continue conversation with tool outputs if needed
             LlmClient.LlmResponse followUp = llmClient.continueChat(systemPrompt, userPrompt, toolResults);
             if (followUp != null && followUp.content() != null && !followUp.content().isBlank()) {
-                // If LLM returned a specific username or identifier
                 if (resolvedUser == null && !followUp.content().contains(" ")) {
                     resolvedUser = followUp.content().trim();
                 }
             }
         }
 
-        // Fallback resolution using IdentityService when running in standalone mode without LLM provider
+        // Fallback for standalone / offline evaluation
         if (resolvedUser == null && candidateUsers.isEmpty()) {
-            if (initiatorProfile != null && initiatorProfile.departmentId() != null) {
-                Optional<String> deptMgr = identityService.getDepartmentManager(initiatorProfile.departmentId());
-                if (deptMgr.isPresent()) {
-                    resolvedUser = deptMgr.get();
-                } else if (initiatorProfile.directLeaderId() != null) {
-                    resolvedUser = initiatorProfile.directLeaderId();
+            if (branchKey.contains(">")) {
+                // High-tier condition branch fallback (e.g. GM / CEO / Director)
+                Optional<String> gmOpt = identityService.getDepartmentManager("DEPT_GM");
+                if (gmOpt.isPresent()) {
+                    resolvedUser = gmOpt.get();
+                } else {
+                    List<String> gmRoleUsers = identityService.getUsersByRole("ROLE_GM");
+                    if (!gmRoleUsers.isEmpty()) resolvedUser = gmRoleUsers.get(0);
                 }
-            } else if (identityService != null) {
-                resolvedUser = identityService.getDirectLeader(initiator).orElse(null);
+            }
+
+            if (resolvedUser == null) {
+                if (initiatorProfile != null && initiatorProfile.departmentId() != null) {
+                    resolvedUser = identityService.getDepartmentManager(initiatorProfile.departmentId()).orElse(null);
+                }
+                if (resolvedUser == null && identityService != null) {
+                    resolvedUser = identityService.getDirectLeader(initiator).orElse(null);
+                }
             }
         }
 
@@ -230,6 +243,6 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
 
     private boolean isNaturalLanguage(String str) {
         if (str == null || str.isBlank()) return false;
-        return str.contains(" ") || str.contains("的") || str.contains("审批") || str.contains("领导") || str.contains("主管") || str.contains("负责人");
+        return str.contains(" ") || str.contains("的") || str.contains("审批") || str.contains("领导") || str.contains("主管") || str.contains("负责人") || str.contains("总经理");
     }
 }

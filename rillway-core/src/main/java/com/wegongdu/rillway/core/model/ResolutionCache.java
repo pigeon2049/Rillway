@@ -8,13 +8,14 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Cached successful workflow decision snapshot with TTL and organizational state fingerprints.
+ * Cached successful workflow decision snapshot with TTL, condition branch fingerprints, and organizational state.
  */
 public record ResolutionCache(
         String id,
         String definitionId,
         String nodeId,
         String promptHash,
+        String conditionBranchKey,
 
         // Initiator snapshot when resolved
         String initiatorUserId,
@@ -40,6 +41,9 @@ public record ResolutionCache(
         Objects.requireNonNull(definitionId, "definitionId must not be null");
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(promptHash, "promptHash must not be null");
+        if (conditionBranchKey == null || conditionBranchKey.isBlank()) {
+            conditionBranchKey = "DEFAULT";
+        }
         candidateUsers = candidateUsers != null ? List.copyOf(candidateUsers) : Collections.emptyList();
         candidateRoles = candidateRoles != null ? List.copyOf(candidateRoles) : Collections.emptyList();
         if (createdAt == null) createdAt = Instant.now();
@@ -53,6 +57,7 @@ public record ResolutionCache(
                 definitionId,
                 nodeId,
                 promptHash,
+                conditionBranchKey,
                 initiatorUserId,
                 initiatorDeptId,
                 initiatorPostCode,
@@ -78,6 +83,7 @@ public record ResolutionCache(
         private String definitionId;
         private String nodeId;
         private String promptHash;
+        private String conditionBranchKey = "DEFAULT";
         private String initiatorUserId;
         private String initiatorDeptId;
         private String initiatorPostCode;
@@ -108,6 +114,11 @@ public record ResolutionCache(
 
         public Builder promptHash(String promptHash) {
             this.promptHash = promptHash;
+            return this;
+        }
+
+        public Builder conditionBranchKey(String conditionBranchKey) {
+            this.conditionBranchKey = conditionBranchKey;
             return this;
         }
 
@@ -182,6 +193,7 @@ public record ResolutionCache(
                     definitionId,
                     nodeId,
                     promptHash,
+                    conditionBranchKey,
                     initiatorUserId,
                     initiatorDeptId,
                     initiatorPostCode,

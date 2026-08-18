@@ -108,6 +108,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
                     definition_id VARCHAR(64) NOT NULL,
                     node_id VARCHAR(64) NOT NULL,
                     prompt_hash VARCHAR(64) NOT NULL,
+                    condition_branch_key VARCHAR(64) NOT NULL,
                     initiator_user_id VARCHAR(64),
                     initiator_dept_id VARCHAR(64),
                     initiator_post_code VARCHAR(64),

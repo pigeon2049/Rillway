@@ -5,13 +5,13 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Storage SPI for managing successful workflow resolution cache entries.
+ * Storage SPI for managing successful workflow resolution cache entries with branch fingerprint isolation.
  */
 public interface ResolutionCacheRepository {
 
     void save(ResolutionCache cache);
 
-    Optional<ResolutionCache> findMatch(String definitionId, String nodeId, String promptHash, String departmentId, String postCode);
+    Optional<ResolutionCache> findMatch(String definitionId, String nodeId, String promptHash, String conditionBranchKey, String departmentId, String postCode);
 
     List<ResolutionCache> findRecentByDefinitionAndNode(String definitionId, String nodeId, int limit);
 
