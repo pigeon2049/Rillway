@@ -12,6 +12,7 @@ import com.wegongdu.rillway.ai.config.AiModelConfigRepository;
 import com.wegongdu.rillway.ai.identity.AiAssigneeResolver;
 import com.wegongdu.rillway.ai.intent.FakeIntentInterpreter;
 import com.wegongdu.rillway.ai.intent.IntentInterpreter;
+import com.wegongdu.rillway.ai.intent.LlmIntentInterpreter;
 import com.wegongdu.rillway.ai.llm.FakeLlmClient;
 import com.wegongdu.rillway.ai.llm.LlmClient;
 import com.wegongdu.rillway.ai.llm.OpenAiCompatibleLlmClient;
@@ -184,8 +185,8 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public IntentInterpreter intentInterpreter() {
-        return new FakeIntentInterpreter();
+    public IntentInterpreter intentInterpreter(LlmClient llmClient) {
+        return new LlmIntentInterpreter(llmClient);
     }
 
     @Bean

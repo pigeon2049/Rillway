@@ -290,8 +290,20 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 for (Map.Entry<String, Object> entry : tool.parametersSchema().entrySet()) {
                     if (entry.getValue() instanceof Map<?, ?> mapVal) {
                         properties.put(entry.getKey(), mapVal);
-                    } else if (entry.getValue() instanceof String typeStr) {
-                        properties.put(entry.getKey(), Map.of("type", typeStr));
+                    } else if (entry.getValue() instanceof String desc) {
+                        String type = "string";
+                        if (desc.startsWith("array")) {
+                            type = "array";
+                        } else if (desc.startsWith("object")) {
+                            type = "object";
+                        } else if (desc.startsWith("integer") || desc.startsWith("int")) {
+                            type = "integer";
+                        } else if (desc.startsWith("number")) {
+                            type = "number";
+                        } else if (desc.startsWith("boolean") || desc.startsWith("bool")) {
+                            type = "boolean";
+                        }
+                        properties.put(entry.getKey(), Map.of("type", type, "description", desc));
                     } else {
                         properties.put(entry.getKey(), Map.of("type", "string"));
                     }
