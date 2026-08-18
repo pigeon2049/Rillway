@@ -420,13 +420,31 @@ public class PurchaseOrderEventListener {
 ## 🗄️ 数据库核心表清单 (全部自动建表 Auto-DDL)
 
 应用启动时自动检测连接池并初始化，**零 DDL 维护成本**：
-1. `rillway_instance`：流程实例与上下文快照
-2. `rillway_task`：待办与已办任务中心
-3. `rillway_history`：执行历史轨迹与审计事件
-4. `rillway_binding_config`：零代码业务单据与自然语言制度绑定表
-5. `rillway_resolution_cache`：大模型决策快照与分支缓存表
-6. `rillway_ai_config`：大模型连接与 API Key 热插拔配置表
-7. `rillway_ai_trace`：大模型与 Tool Calling 方法调用全链路追溯审计表
+1. `rillway_instance`：流程实例运行时状态与上下文快照表
+2. `rillway_task`：全员人工待办与已办任务中心表
+3. `rillway_history`：流程节点全生命周期流转历史轨迹与审计事件表
+4. `rillway_binding_config`：零代码业务单据与自然语言制度绑定配置表（支持一键大模型生成 DAG）
+5. `rillway_resolution_cache`：大模型审批决策快照与分支隔离缓存表
+6. `rillway_ai_config`：大模型连接与 API Key 热插拔配置表（支持 DeepSeek, OpenAI, 智谱, Qwen, Ollama）
+7. `rillway_ai_trace`：大模型与 Tool Calling 全链路追溯审计日志表
+
+---
+
+## 🌐 示例工程 RESTful 控制台 API 清单 (`rillway-example`)
+
+| 模块 / 底表 | 方法 | API 端点 | 功能说明 |
+| :--- | :--- | :--- | :--- |
+| **Prompt 编译器** | `POST` | `/api/workflow/compile` | 传入任意自然语言审批制度，大模型即时编译并返回标准 DAG 图 |
+| **流程预测预览** | `POST` | `/api/hrm/leave/preview` | 员工提交表单前，预测流经节点路径、审批人及 AI 智能审查节点 |
+| **实体流程发起** | `POST` | `/api/hrm/leave/apply` | 员工提交请假申请，引擎自动匹配规则并生成多级待办 |
+| **待办任务办理** | `POST` | `/api/workflow/tasks/{id}/approve` | 审批人提交审批通过意见，自动推进至下一关卡或终审完成 |
+| **单据规则绑定** | `GET/POST`| `/api/admin/binding-config` | 查询或保存单据与表字段映射，配置 `process_prompt` 制度 |
+| **一键生成流程** | `POST` | `/api/admin/binding-config/{id}/generate-flow` | **核心亮点**：根据配置表的自然语言制度，一键调用大模型编译生成流程定义并绑定 |
+| **大模型热插拔** | `GET/POST`| `/api/admin/ai-config` | 动态热切换大模型连接、Base URL 与 API Key，无需重启服务 |
+| **决策快照缓存** | `GET/DEL` | `/api/admin/resolution-cache` | 查看大模型决策分支缓存快照，或一键按流程/全局清空缓存 |
+| **AI 调用全链路追溯** | `GET` | `/api/admin/ai-trace` | 实时查看大模型 Prompt、Tool Calling 入参、响应与消耗 Token 统计 |
+| **全员任务监控** | `GET/POST`| `/api/admin/tasks` | 管理员监控全员任务，支持强制委派重派 (`/reassign`) |
+| **实例运行时管理** | `GET/POST`| `/api/admin/instances` | 流程实例运行监控，支持管理员后台强制终止作废 (`/terminate`) |
 
 ---
 

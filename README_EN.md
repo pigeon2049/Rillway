@@ -418,16 +418,34 @@ public class PurchaseOrderEventListener {
 
 ---
 
-## 🗄️ Core Tables (Zero-Config Auto-DDL)
+## 🗄️ Core Database Tables (Zero-Config Auto-DDL)
 
 Auto-initialized on application startup when a DataSource is detected:
-1. `rillway_instance`: Process instances and context snapshots
-2. `rillway_task`: Human task inbox and candidate tasks
-3. `rillway_history`: Execution history records and audit events
-4. `rillway_binding_config`: Zero-code business entity and natural language policy binding rules
+1. `rillway_instance`: Process instances runtime state and execution context snapshots
+2. `rillway_task`: Human task inbox and assignee/candidate tasks
+3. `rillway_history`: Execution history records and audit lifecycle events
+4. `rillway_binding_config`: Zero-code business entity and natural language policy binding rules (supports one-click LLM DAG generation)
 5. `rillway_resolution_cache`: Decision snapshots and branch-isolated caches
-6. `rillway_ai_config`: LLM connection and API Key hot-swap configs
+6. `rillway_ai_config`: LLM connection and API Key hot-swap configs (supports DeepSeek, OpenAI, GLM, Qwen, Ollama)
 7. `rillway_ai_trace`: Full-link LLM and Tool Calling audit logs
+
+---
+
+## 🌐 Example Showcase RESTful Console APIs (`rillway-example`)
+
+| Module / Table | Method | API Endpoint | Description |
+| :--- | :--- | :--- | :--- |
+| **Prompt Compiler** | `POST` | `/api/workflow/compile` | Compiles arbitrary natural language approval policies into standard DAG flowcharts |
+| **Path Preview** | `POST` | `/api/hrm/leave/preview` | Predicts execution path, approver personnel, and AI Agent nodes before submission |
+| **Entity Apply** | `POST` | `/api/hrm/leave/apply` | Initiates leave application entity and matches approval rules automatically |
+| **Task Approve** | `POST` | `/api/workflow/tasks/{id}/approve` | Approver submits approval comment and advances flow to next stage or completion |
+| **Binding Config** | `GET/POST`| `/api/admin/binding-config` | Queries or saves entity field bindings and `process_prompt` policy text |
+| **One-Click Generate Flow** | `POST` | `/api/admin/binding-config/{id}/generate-flow` | **Key Feature**: Calls LLM to compile policy prompt from config table into a DAG workflow |
+| **LLM Hot-Reload** | `GET/POST`| `/api/admin/ai-config` | Dynamically hot-swaps LLM connection, Base URL, and API Key without restarting service |
+| **Decision Cache** | `GET/DEL` | `/api/admin/resolution-cache` | Views branch decision snapshots or clears cache globally / per process |
+| **AI Audit Trace** | `GET` | `/api/admin/ai-trace` | Real-time audit logs of LLM Prompts, Tool Calling arguments, responses, and Token costs |
+| **Task Operations** | `GET/POST`| `/api/admin/tasks` | Admin task inbox monitor, supports mandatory reassignment (`/reassign`) |
+| **Instance Runtime** | `GET/POST`| `/api/admin/instances` | Runtime monitor with admin mandatory termination support (`/terminate`) |
 
 ---
 
