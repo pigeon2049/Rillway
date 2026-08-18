@@ -287,7 +287,69 @@ public class PurchaseOrderEventListener {
 
 ---
 
-### 6. 企业级边界与运维处理
+### 6. 对接企业组织架构与人员服务 (`IdentityService` SPI)
+
+大模型如何精准识别“申请人直属领导”、“研发部门经理”、“财务总监”？
+只需在业务系统中实现 `IdentityService` 接口并注册为 Spring Bean，大模型将通过 **Tool Calling 自动调用该接口获取人员信息**：
+
+```java
+@Service
+public class EnterpriseIdentityService implements IdentityService {
+
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private DeptMapper deptMapper;
+
+    // 1. 获取用户完整组织画像（部门、岗位、直属上级ID）
+    @Override
+    public Optional<UserProfile> getUserProfile(String userId) {
+        SysUser user = userMapper.selectById(userId);
+        if (user == null) return Optional.empty();
+
+        return Optional.of(UserProfile.builder(userId)
+                .username(user.getNickname())
+                .departmentId(String.valueOf(user.getDeptId()))
+                .departmentName(user.getDeptName())
+                .directLeaderId(String.valueOf(user.getLeaderId()))
+                .roles(user.getRoleKeys())
+                .build());
+    }
+
+    // 2. 查询申请人的直属领导 ID
+    @Override
+    public Optional<String> getDirectLeader(String userId) {
+        return Optional.ofNullable(userMapper.selectLeaderIdByUserId(userId));
+    }
+
+    // 3. 查询指定部门的负责人 / 总监 ID
+    @Override
+    public Optional<String> getDepartmentManager(String departmentId) {
+        return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
+    }
+
+    // 4. 根据角色或岗位查询人员列表（如 'FINANCE_DIRECTOR'）
+    @Override
+    public List<String> getUsersByRole(String roleCode) {
+        return userMapper.selectUserIdsByRole(roleCode);
+    }
+
+    @Override
+    public List<String> getUsersByDepartment(String departmentId) {
+        return userMapper.selectUserIdsByDeptId(departmentId);
+    }
+
+    @Override
+    public List<String> getUsersByPost(String postCode) {
+        return userMapper.selectUserIdsByPostCode(postCode);
+    }
+}
+```
+> 💡 **零配置默认兜底**：若业务系统未提供自定义 `IdentityService`，Rillway 会自动启用内存版 `DefaultIdentityService`，单测与本地开发开箱即用。
+
+---
+
+### 7. 企业级边界与运维处理
 
 - **终审节点感知**：
   ```java

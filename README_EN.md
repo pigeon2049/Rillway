@@ -288,7 +288,69 @@ public class PurchaseOrderEventListener {
 
 ---
 
-### 6. Enterprise Edge Cases & Operations
+### 6. Connecting Enterprise Org & Personnel (`IdentityService` SPI)
+
+How does the LLM accurately identify "applicant's direct manager", "R&D department director", or "CFO"?
+Simply implement the `IdentityService` interface in your Spring Boot application. The LLM will **automatically query your organization and user tables via Tool Calling**:
+
+```java
+@Service
+public class EnterpriseIdentityService implements IdentityService {
+
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private DeptMapper deptMapper;
+
+    // 1. Get complete user profile (department, job position, leader ID)
+    @Override
+    public Optional<UserProfile> getUserProfile(String userId) {
+        SysUser user = userMapper.selectById(userId);
+        if (user == null) return Optional.empty();
+
+        return Optional.of(UserProfile.builder(userId)
+                .username(user.getNickname())
+                .departmentId(String.valueOf(user.getDeptId()))
+                .departmentName(user.getDeptName())
+                .directLeaderId(String.valueOf(user.getLeaderId()))
+                .roles(user.getRoleKeys())
+                .build());
+    }
+
+    // 2. Query applicant's direct manager user ID
+    @Override
+    public Optional<String> getDirectLeader(String userId) {
+        return Optional.ofNullable(userMapper.selectLeaderIdByUserId(userId));
+    }
+
+    // 3. Query department manager / director ID
+    @Override
+    public Optional<String> getDepartmentManager(String departmentId) {
+        return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
+    }
+
+    // 4. Query user IDs by role or post (e.g. 'FINANCE_DIRECTOR')
+    @Override
+    public List<String> getUsersByRole(String roleCode) {
+        return userMapper.selectUserIdsByRole(roleCode);
+    }
+
+    @Override
+    public List<String> getUsersByDepartment(String departmentId) {
+        return userMapper.selectUserIdsByDeptId(departmentId);
+    }
+
+    @Override
+    public List<String> getUsersByPost(String postCode) {
+        return userMapper.selectUserIdsByPostCode(postCode);
+    }
+}
+```
+> 💡 **Out-of-the-Box Fallback**: If no custom `IdentityService` is registered, Rillway automatically uses `DefaultIdentityService` for painless unit testing and local development.
+
+---
+
+### 7. Enterprise Edge Cases & Operations
 
 - **Terminal Node Detection**:
   ```java
