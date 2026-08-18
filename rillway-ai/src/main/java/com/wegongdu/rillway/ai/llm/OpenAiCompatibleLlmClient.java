@@ -27,12 +27,17 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private final double temperature;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private com.wegongdu.rillway.ai.trace.LlmTraceSink traceSink;
 
     public OpenAiCompatibleLlmClient(String baseUrl, String apiKey, String model) {
         this(baseUrl, apiKey, model, 0.1, Duration.ofSeconds(30));
     }
 
     public OpenAiCompatibleLlmClient(String baseUrl, String apiKey, String model, double temperature, Duration timeout) {
+        this(baseUrl, apiKey, model, temperature, timeout, null);
+    }
+
+    public OpenAiCompatibleLlmClient(String baseUrl, String apiKey, String model, double temperature, Duration timeout, com.wegongdu.rillway.ai.trace.LlmTraceSink traceSink) {
         this.baseUrl = sanitizeBaseUrl(baseUrl);
         this.apiKey = apiKey != null ? apiKey.trim() : "";
         this.model = model != null && !model.isBlank() ? model.trim() : "gpt-4o-mini";
@@ -41,10 +46,21 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 .connectTimeout(timeout != null ? timeout : Duration.ofSeconds(30))
                 .build();
         this.objectMapper = new ObjectMapper();
+        this.traceSink = traceSink;
+    }
+
+    public void setTraceSink(com.wegongdu.rillway.ai.trace.LlmTraceSink traceSink) {
+        this.traceSink = traceSink;
     }
 
     @Override
     public LlmResponse chat(String systemPrompt, String userPrompt, List<ToolDefinition> availableTools) {
+        long startTime = System.currentTimeMillis();
+        String status = "SUCCESS";
+        String errorMessage = null;
+        LlmResponse response = null;
+        ParsedTraceMeta traceMeta = null;
+
         try {
             Map<String, Object> requestBody = new LinkedHashMap<>();
             requestBody.put("model", model);
@@ -65,15 +81,28 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 requestBody.put("tool_choice", "auto");
             }
 
-            return executeChatCompletion(requestBody);
+            ChatExecutionResult result = executeChatCompletionWithMeta(requestBody);
+            response = result.response();
+            traceMeta = result.meta();
+            return response;
         } catch (Exception e) {
+            status = "FAILED";
+            errorMessage = e.getMessage();
             log.error("Failed to execute OpenAI chat request to [{}], model: [{}]", baseUrl, model, e);
             throw new RuntimeException("OpenAI API request failed: " + e.getMessage(), e);
+        } finally {
+            recordTrace("CHAT", systemPrompt, userPrompt, response, traceMeta, startTime, status, errorMessage);
         }
     }
 
     @Override
     public LlmResponse continueChat(String systemPrompt, String userPrompt, List<ToolResult> toolResults) {
+        long startTime = System.currentTimeMillis();
+        String status = "SUCCESS";
+        String errorMessage = null;
+        LlmResponse response = null;
+        ParsedTraceMeta traceMeta = null;
+
         try {
             Map<String, Object> requestBody = new LinkedHashMap<>();
             requestBody.put("model", model);
@@ -124,14 +153,24 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             }
             requestBody.put("messages", messages);
 
-            return executeChatCompletion(requestBody);
+            ChatExecutionResult result = executeChatCompletionWithMeta(requestBody);
+            response = result.response();
+            traceMeta = result.meta();
+            return response;
         } catch (Exception e) {
+            status = "FAILED";
+            errorMessage = e.getMessage();
             log.error("Failed to execute OpenAI continueChat request to [{}], model: [{}]", baseUrl, model, e);
             throw new RuntimeException("OpenAI continueChat request failed: " + e.getMessage(), e);
+        } finally {
+            recordTrace("CONTINUE_CHAT", systemPrompt, userPrompt, response, traceMeta, startTime, status, errorMessage);
         }
     }
 
-    private LlmResponse executeChatCompletion(Map<String, Object> requestBody) throws Exception {
+    public record ParsedTraceMeta(Integer promptTokens, Integer completionTokens, Integer totalTokens, String toolCallsJson) {}
+    public record ChatExecutionResult(LlmResponse response, ParsedTraceMeta meta) {}
+
+    private ChatExecutionResult executeChatCompletionWithMeta(Map<String, Object> requestBody) throws Exception {
         String jsonPayload = objectMapper.writeValueAsString(requestBody);
         String endpoint = baseUrl.endsWith("/chat/completions") ? baseUrl : baseUrl + "/chat/completions";
 
@@ -152,21 +191,27 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             throw new RuntimeException("OpenAI API returned HTTP " + response.statusCode() + ": " + response.body());
         }
 
-        return parseOpenAiResponse(response.body());
+        return parseOpenAiResponseWithMeta(response.body());
     }
 
     public LlmResponse parseOpenAiResponse(String responseJson) throws Exception {
+        return parseOpenAiResponseWithMeta(responseJson).response();
+    }
+
+    public ChatExecutionResult parseOpenAiResponseWithMeta(String responseJson) throws Exception {
         JsonNode root = objectMapper.readTree(responseJson);
         JsonNode choices = root.path("choices");
         if (choices.isMissingNode() || !choices.isArray() || choices.isEmpty()) {
-            return new LlmResponse("", List.of());
+            return new ChatExecutionResult(new LlmResponse("", List.of()), new ParsedTraceMeta(0, 0, 0, null));
         }
 
         JsonNode message = choices.get(0).path("message");
         String content = message.path("content").asText(null);
         List<ToolCall> toolCalls = new ArrayList<>();
+        String toolCallsJson = null;
 
         if (message.has("tool_calls")) {
+            toolCallsJson = message.path("tool_calls").toString();
             for (JsonNode tc : message.path("tool_calls")) {
                 String callId = tc.path("id").asText();
                 String funcName = tc.path("function").path("name").asText();
@@ -175,7 +220,43 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 toolCalls.add(new ToolCall(callId, funcName, arguments));
             }
         }
-        return new LlmResponse(content, toolCalls);
+
+        JsonNode usage = root.path("usage");
+        Integer promptTokens = usage.path("prompt_tokens").asInt(0);
+        Integer completionTokens = usage.path("completion_tokens").asInt(0);
+        Integer totalTokens = usage.path("total_tokens").asInt(0);
+
+        LlmResponse llmResponse = new LlmResponse(content, toolCalls);
+        ParsedTraceMeta meta = new ParsedTraceMeta(promptTokens, completionTokens, totalTokens, toolCallsJson);
+        return new ChatExecutionResult(llmResponse, meta);
+    }
+
+    private void recordTrace(String callType, String systemPrompt, String userPrompt, LlmResponse response,
+                             ParsedTraceMeta traceMeta, long startTime, String status, String errorMessage) {
+        if (traceSink == null) return;
+        try {
+            long latencyMs = System.currentTimeMillis() - startTime;
+            String promptText = (systemPrompt != null ? "[System]\n" + systemPrompt + "\n\n" : "") +
+                    (userPrompt != null ? "[User]\n" + userPrompt : "");
+
+            com.wegongdu.rillway.ai.trace.LlmTraceRecord record = com.wegongdu.rillway.ai.trace.LlmTraceRecord.builder()
+                    .callType(callType)
+                    .model(model)
+                    .promptText(promptText)
+                    .responseText(response != null ? response.content() : null)
+                    .toolCallsJson(traceMeta != null ? traceMeta.toolCallsJson() : null)
+                    .promptTokens(traceMeta != null ? traceMeta.promptTokens() : 0)
+                    .completionTokens(traceMeta != null ? traceMeta.completionTokens() : 0)
+                    .totalTokens(traceMeta != null ? traceMeta.totalTokens() : 0)
+                    .latencyMs(latencyMs)
+                    .status(status)
+                    .errorMessage(errorMessage)
+                    .build();
+
+            traceSink.record(record);
+        } catch (Exception e) {
+            log.warn("Failed to record LLM invocation trace", e);
+        }
     }
 
     @SuppressWarnings("unchecked")

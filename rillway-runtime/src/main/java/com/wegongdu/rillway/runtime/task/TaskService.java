@@ -20,4 +20,19 @@ public interface TaskService {
     List<Task> findTasksByProcessInstanceId(String processInstanceId);
 
     ProcessInstance completeTask(String taskId, Decision decision);
+
+    /**
+     * Transfers a pending task to another user (e.g. employee job reassignment / offboarding).
+     */
+    Task transferTask(String taskId, String newAssignee, String reason);
+
+    /**
+     * Transfers a pending task to another user or role.
+     */
+    Task transferTask(String taskId, String newAssignee, String newAssigneeRole, String reason);
+
+    /**
+     * Checks whether this task belongs to the final approval node before process completion.
+     */
+    boolean isTerminalTask(String taskId);
 }

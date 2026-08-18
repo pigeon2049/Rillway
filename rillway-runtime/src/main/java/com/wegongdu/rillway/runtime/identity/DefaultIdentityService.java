@@ -77,6 +77,55 @@ public class DefaultIdentityService implements IdentityService {
         return this;
     }
 
+    private String fallbackAssignee = "admin";
+
+    public DefaultIdentityService setFallbackAssignee(String fallbackAssignee) {
+        if (fallbackAssignee != null && !fallbackAssignee.isBlank()) {
+            this.fallbackAssignee = fallbackAssignee.trim();
+        }
+        return this;
+    }
+
+    public String getFallbackAssignee() {
+        return fallbackAssignee;
+    }
+
+    /**
+     * Resolves an effective leader, escalating up the hierarchy or falling back to department manager / admin
+     * if the immediate leader is missing or inactive.
+     */
+    public Optional<String> getEffectiveDirectLeader(String userId) {
+        if (userId == null) return Optional.ofNullable(fallbackAssignee);
+
+        java.util.Set<String> visited = new java.util.HashSet<>();
+        String current = userId;
+
+        while (current != null && visited.add(current)) {
+            String leader = directLeaders.get(current);
+            if (leader == null && userProfiles.containsKey(current)) {
+                leader = userProfiles.get(current).directLeaderId();
+            }
+
+            if (leader != null && !leader.isBlank() && !leader.equals(current)) {
+                // Found leader
+                return Optional.of(leader);
+            }
+
+            // If leader is missing, try department manager
+            UserProfile profile = userProfiles.get(current);
+            if (profile != null && profile.departmentId() != null) {
+                String deptManager = departmentManagers.get(profile.departmentId());
+                if (deptManager != null && !deptManager.isBlank() && !deptManager.equals(userId)) {
+                    return Optional.of(deptManager);
+                }
+            }
+
+            break;
+        }
+
+        return Optional.ofNullable(fallbackAssignee);
+    }
+
     @Override
     public Optional<UserProfile> getUserProfile(String userId) {
         if (userId == null) return Optional.empty();

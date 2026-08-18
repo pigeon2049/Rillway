@@ -95,6 +95,7 @@ public class RillwayProperties {
 
     public static class Ai {
         private OpenAi openai = new OpenAi();
+        private Trace trace = new Trace();
 
         public OpenAi getOpenai() {
             return openai;
@@ -102,6 +103,44 @@ public class RillwayProperties {
 
         public void setOpenai(OpenAi openai) {
             this.openai = openai;
+        }
+
+        public Trace getTrace() {
+            return trace;
+        }
+
+        public void setTrace(Trace trace) {
+            this.trace = trace;
+        }
+    }
+
+    public static class Trace {
+        private boolean enabled = true;
+        private boolean logPayload = true;
+        private boolean recordToolCalls = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isLogPayload() {
+            return logPayload;
+        }
+
+        public void setLogPayload(boolean logPayload) {
+            this.logPayload = logPayload;
+        }
+
+        public boolean isRecordToolCalls() {
+            return recordToolCalls;
+        }
+
+        public void setRecordToolCalls(boolean recordToolCalls) {
+            this.recordToolCalls = recordToolCalls;
         }
     }
 

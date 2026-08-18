@@ -19,6 +19,18 @@ public interface IdentityService {
     Optional<String> getDirectLeader(String userId);
 
     /**
+     * Finds an effective leader, falling back to department manager if direct leader is missing/inactive.
+     */
+    default Optional<String> getEffectiveDirectLeader(String userId) {
+        Optional<String> leader = getDirectLeader(userId);
+        if (leader.isPresent()) return leader;
+
+        return getUserProfile(userId)
+                .map(UserProfile::departmentId)
+                .flatMap(this::getDepartmentManager);
+    }
+
+    /**
      * Finds the manager/head user ID of a specified department.
      */
     Optional<String> getDepartmentManager(String departmentId);

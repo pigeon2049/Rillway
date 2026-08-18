@@ -26,7 +26,9 @@ import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryReposi
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcResolutionCacheRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcTaskRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcLlmTraceSink;
 import com.wegongdu.rillway.autoconfigure.persistence.InMemoryAiModelConfigRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.InMemoryLlmTraceSink;
 import com.wegongdu.rillway.autoconfigure.persistence.RillwayDatabaseInitializer;
 import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.core.identity.IdentityService;
@@ -71,6 +73,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Spring Boot 3 auto-configuration for Rillway workflow engine.
@@ -111,33 +114,39 @@ public class RillwayAutoConfiguration {
     @ConditionalOnMissingBean
     public LlmClient llmClient(
             RillwayProperties properties,
-            ObjectProvider<AiModelConfigRepository> aiModelConfigRepoProvider
+            AiModelConfigRepository modelConfigRepository,
+            ObjectProvider<com.wegongdu.rillway.ai.trace.LlmTraceSink> traceSinkProvider
     ) {
-        // 1. Check database AI model configuration if available
-        AiModelConfigRepository repo = aiModelConfigRepoProvider.getIfAvailable();
-        if (repo != null) {
-            java.util.Optional<AiModelConfig> dbConfigOpt = repo.findDefault();
-            if (dbConfigOpt.isPresent()) {
-                AiModelConfig cfg = dbConfigOpt.get();
+        com.wegongdu.rillway.ai.trace.LlmTraceSink traceSink = (properties.getAi().getTrace().isEnabled())
+                ? traceSinkProvider.getIfAvailable()
+                : null;
+
+        // 1. Try database config repository
+        if (modelConfigRepository != null) {
+            Optional<AiModelConfig> defaultConfig = modelConfigRepository.findDefault();
+            if (defaultConfig.isPresent() && defaultConfig.get().enabled()) {
+                AiModelConfig config = defaultConfig.get();
                 return new OpenAiCompatibleLlmClient(
-                        cfg.baseUrl(),
-                        cfg.apiKey(),
-                        cfg.modelName(),
-                        cfg.temperature() != null ? cfg.temperature() : 0.1,
-                        cfg.timeoutSeconds() != null ? java.time.Duration.ofSeconds(cfg.timeoutSeconds()) : java.time.Duration.ofSeconds(30)
+                        config.baseUrl(),
+                        config.apiKey(),
+                        config.modelName(),
+                        config.temperature(),
+                        java.time.Duration.ofSeconds(config.timeoutSeconds()),
+                        traceSink
                 );
             }
         }
 
-        // 2. Check application properties
+        // 2. Try application.yml rillway.ai.openai
         RillwayProperties.OpenAi openAi = properties.getAi().getOpenai();
-        if (openAi.isEnabled() || (openAi.getApiKey() != null && !openAi.getApiKey().isBlank())) {
+        if (openAi.isEnabled() && openAi.getApiKey() != null && !openAi.getApiKey().isBlank()) {
             return new OpenAiCompatibleLlmClient(
                     openAi.getBaseUrl(),
                     openAi.getApiKey(),
                     openAi.getModel(),
                     openAi.getTemperature() != null ? openAi.getTemperature() : 0.1,
-                    openAi.getTimeoutSeconds() != null ? java.time.Duration.ofSeconds(openAi.getTimeoutSeconds()) : java.time.Duration.ofSeconds(30)
+                    openAi.getTimeoutSeconds() != null ? java.time.Duration.ofSeconds(openAi.getTimeoutSeconds()) : java.time.Duration.ofSeconds(30),
+                    traceSink
             );
         }
 
@@ -272,6 +281,15 @@ public class RillwayAutoConfiguration {
         ) {
             return new JdbcAiModelConfigRepository(new JdbcTemplate(dataSource));
         }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public com.wegongdu.rillway.ai.trace.LlmTraceSink llmTraceSink(
+                DataSource dataSource,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcLlmTraceSink(new JdbcTemplate(dataSource));
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -311,6 +329,12 @@ public class RillwayAutoConfiguration {
         @ConditionalOnMissingBean
         public AiModelConfigRepository aiModelConfigRepository() {
             return new InMemoryAiModelConfigRepository();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public com.wegongdu.rillway.ai.trace.LlmTraceSink llmTraceSink() {
+            return new InMemoryLlmTraceSink();
         }
     }
 

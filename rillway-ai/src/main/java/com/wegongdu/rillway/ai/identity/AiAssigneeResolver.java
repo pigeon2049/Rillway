@@ -200,7 +200,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
                     resolvedUser = identityService.getDepartmentManager(initiatorProfile.departmentId()).orElse(null);
                 }
                 if (resolvedUser == null && identityService != null) {
-                    resolvedUser = identityService.getDirectLeader(initiator).orElse(null);
+                    resolvedUser = identityService.getEffectiveDirectLeader(initiator).orElse(null);
                 }
             }
         }
@@ -219,7 +219,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             }
             case "getDirectLeader" -> {
                 String uid = (String) args.getOrDefault("userId", defaultInitiator);
-                yield identityService.getDirectLeader(uid);
+                yield identityService.getEffectiveDirectLeader(uid);
             }
             case "getDepartmentManager" -> {
                 String deptId = (String) args.get("departmentId");

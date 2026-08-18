@@ -144,6 +144,33 @@ public class RillwayDatabaseInitializer implements InitializingBean {
                 )
             """);
         }
+
+        if (!tableExists("rillway_ai_trace")) {
+            log.info("Rillway table [rillway_ai_trace] not found. Creating table automatically...");
+            jdbcTemplate.execute("""
+                CREATE TABLE rillway_ai_trace (
+                    id VARCHAR(64) PRIMARY KEY,
+                    trace_id VARCHAR(64),
+                    node_id VARCHAR(64),
+                    business_type VARCHAR(64),
+                    model VARCHAR(64),
+                    call_type VARCHAR(32) NOT NULL,
+                    prompt_text TEXT,
+                    response_text TEXT,
+                    tool_name VARCHAR(128),
+                    tool_arguments TEXT,
+                    tool_result TEXT,
+                    tool_calls_json TEXT,
+                    prompt_tokens INT DEFAULT 0,
+                    completion_tokens INT DEFAULT 0,
+                    total_tokens INT DEFAULT 0,
+                    latency_ms BIGINT DEFAULT 0,
+                    status VARCHAR(32) DEFAULT 'SUCCESS',
+                    error_message TEXT,
+                    created_at TIMESTAMP NOT NULL
+                )
+            """);
+        }
     }
 
     private boolean tableExists(String tableName) {

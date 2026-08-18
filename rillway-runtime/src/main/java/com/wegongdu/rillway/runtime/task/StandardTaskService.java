@@ -72,4 +72,40 @@ public class StandardTaskService implements TaskService {
         // 2. Resume process workflow with the decision
         return processEngine.resume(instance, decision);
     }
+
+    @Override
+    public Task transferTask(String taskId, String newAssignee, String reason) {
+        return transferTask(taskId, newAssignee, null, reason);
+    }
+
+    @Override
+    public Task transferTask(String taskId, String newAssignee, String newAssigneeRole, String reason) {
+        Objects.requireNonNull(taskId, "taskId must not be null");
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+
+        if (task.status() != TaskStatus.PENDING) {
+            throw new IllegalStateException("Cannot transfer non-pending task: " + taskId + " (status: " + task.status() + ")");
+        }
+
+        Task transferredTask = task.transfer(
+                newAssignee != null ? newAssignee.trim() : task.assigneeUser(),
+                newAssigneeRole != null ? newAssigneeRole.trim() : task.assigneeRole()
+        );
+
+        taskRepository.update(transferredTask);
+        return transferredTask;
+    }
+
+    @Override
+    public boolean isTerminalTask(String taskId) {
+        if (taskId == null) return false;
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null) return false;
+
+        com.wegongdu.rillway.core.definition.ProcessDefinition definition = processEngine.findDefinition(task.definitionId()).orElse(null);
+        if (definition == null) return false;
+
+        return definition.isTerminalNode(task.nodeId());
+    }
 }

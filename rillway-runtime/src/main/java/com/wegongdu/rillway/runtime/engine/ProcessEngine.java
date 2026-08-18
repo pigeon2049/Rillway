@@ -69,4 +69,8 @@ public interface ProcessEngine {
     }
 
     ProcessInstance resume(ProcessInstance instance, Decision decision);
+
+    default java.util.Optional<ProcessDefinition> findDefinition(String definitionId) {
+        return java.util.Optional.empty();
+    }
 }

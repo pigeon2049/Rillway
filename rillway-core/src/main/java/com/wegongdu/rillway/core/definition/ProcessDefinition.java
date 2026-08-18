@@ -71,6 +71,27 @@ public record ProcessDefinition(
                 .toList();
     }
 
+    /**
+     * Checks whether the specified node directly connects only to End nodes (or has no outgoing edges),
+     * indicating that approving this node will complete the process.
+     */
+    public boolean isTerminalNode(String nodeId) {
+        if (nodeId == null) return false;
+        List<Edge> out = outgoingEdges(nodeId);
+        if (out.isEmpty()) return true;
+        return out.stream().allMatch(edge -> {
+            Node target = nodes.get(edge.targetNodeId());
+            return target != null && target.type() == NodeType.END;
+        });
+    }
+
+    /**
+     * Alias for isTerminalNode(nodeId).
+     */
+    public boolean isFinalApproval(String nodeId) {
+        return isTerminalNode(nodeId);
+    }
+
     public static Builder builder(String id) {
         return new Builder(id);
     }

@@ -131,6 +131,12 @@ public class StandardProcessEngine implements ProcessEngine {
     }
 
     @Override
+    public java.util.Optional<ProcessDefinition> findDefinition(String definitionId) {
+        if (definitionId == null) return java.util.Optional.empty();
+        return java.util.Optional.ofNullable(definitionCache.get(definitionId));
+    }
+
+    @Override
     public ProcessInstance startByBusinessType(String businessType, String entityId, ProcessContext context) {
         Objects.requireNonNull(businessType, "businessType must not be null");
         Objects.requireNonNull(entityId, "entityId must not be null");

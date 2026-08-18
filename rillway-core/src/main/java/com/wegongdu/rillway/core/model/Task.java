@@ -101,4 +101,22 @@ public record Task(
                 Instant.now()
         );
     }
+
+    public Task transfer(String newAssigneeUser, String newAssigneeRole) {
+        return new Task(
+                id,
+                processInstanceId,
+                businessKey,
+                definitionId,
+                nodeId,
+                nodeName,
+                newAssigneeUser != null ? newAssigneeUser : assigneeUser,
+                newAssigneeRole != null ? newAssigneeRole : assigneeRole,
+                candidateUsers,
+                candidateRoles,
+                status,
+                createdAt,
+                completedAt
+        );
+    }
 }
