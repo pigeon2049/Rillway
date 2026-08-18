@@ -1,6 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Java-21+-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" alt="Java 21" />
   <img src="https://img.shields.io/badge/Spring%20Boot-3.3+-6DB33F?style=for-the-badge&logo=spring&logoColor=white" alt="Spring Boot 3" />
+  <a href="https://jitpack.io/#pigeon2049/Rillway"><img src="https://img.shields.io/badge/JitPack-v0.1.0-brightgreen?style=for-the-badge&logo=apachemaven" alt="JitPack" /></a>
   <img src="https://img.shields.io/badge/Architecture-AI--Native-6366F1?style=for-the-badge" alt="AI Native" />
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License" />
 </p>
@@ -38,13 +39,27 @@
 
 只需要简单的 **3 步**，即可完成全套 AI 审批流程接入：
 
-### 第 1 步：引入 Maven Starter
+### 第 1 步：引入 Maven 依赖 (JitPack)
+
+在业务工程的 `pom.xml` 中添加 JitPack 仓库与 Starter 依赖：
+
 ```xml
-<dependency>
-    <groupId>com.wegongdu.rillway</groupId>
-    <artifactId>rillway-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
-</dependency>
+<!-- 1. 引入 JitPack 仓库 -->
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
+<!-- 2. 引入 Rillway Spring Boot Starter -->
+<dependencies>
+    <dependency>
+        <groupId>com.github.pigeon2049.Rillway</groupId>
+        <artifactId>rillway-spring-boot-starter</artifactId>
+        <version>v0.1.0</version>
+    </dependency>
+</dependencies>
 ```
 
 ### 第 2 步：配置大模型与追踪参数 (`application.yml`)
