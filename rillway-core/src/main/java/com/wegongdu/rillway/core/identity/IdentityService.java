@@ -4,9 +4,14 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Lightweight SPI for querying enterprise organizational structure, leaders, departments, and roles.
+ * Lightweight SPI for querying enterprise organizational structure, profiles, leaders, departments, and roles.
  */
 public interface IdentityService {
+
+    /**
+     * Finds the full organizational profile of a specified user (department, post, roles, direct leader, etc.).
+     */
+    Optional<UserProfile> getUserProfile(String userId);
 
     /**
      * Finds the direct leader/manager user ID of a specified user.

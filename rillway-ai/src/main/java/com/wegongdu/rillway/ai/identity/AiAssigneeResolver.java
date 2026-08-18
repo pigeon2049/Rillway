@@ -5,6 +5,7 @@ import com.wegongdu.rillway.ai.llm.LlmClient;
 import com.wegongdu.rillway.core.context.ProcessContext;
 import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.core.identity.IdentityService;
+import com.wegongdu.rillway.core.identity.UserProfile;
 import com.wegongdu.rillway.core.node.HumanNode;
 
 import java.util.ArrayList;
@@ -13,7 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * AI-native human assignee resolver powered by LLMs and organizational Tool Calling.
+ * AI-native human assignee resolver powered by LLMs, UserProfiles, and organizational Tool Calling.
  */
 public class AiAssigneeResolver implements HumanAssigneeResolver {
 
@@ -72,6 +73,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
 
         // 1. Check if LLM client provides Tool Calling
         List<LlmClient.ToolDefinition> tools = List.of(
+                new LlmClient.ToolDefinition("getUserProfile", "Get complete organizational profile of a user (department, post, roles, leader)", Map.of("userId", "string")),
                 new LlmClient.ToolDefinition("getDirectLeader", "Get direct leader of a user", Map.of("userId", "string")),
                 new LlmClient.ToolDefinition("getDepartmentManager", "Get manager of a department", Map.of("departmentId", "string")),
                 new LlmClient.ToolDefinition("getUsersByPost", "Get users belonging to a post/job position", Map.of("postCode", "string")),
@@ -79,13 +81,26 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
         );
 
         LlmClient.LlmResponse response = llmClient.chat(
-                "You are an organizational identity resolution agent. Analyze the intent and call the appropriate tool.",
-                "Assignee prompt: " + prompt + ", Context: " + (context != null ? context.variables() : "{}"),
+                "You are an organizational identity resolution agent. Analyze the intent and call the appropriate tools to find the assignee.",
+                "Initiator: " + initiator + ", Prompt: " + prompt + ", Context: " + (context != null ? context.variables() : "{}"),
                 tools
         );
 
         if (response.hasToolCalls()) {
             for (LlmClient.ToolCall call : response.toolCalls()) {
+                if ("getUserProfile".equals(call.toolName())) {
+                    String uid = (String) call.arguments().getOrDefault("userId", initiator);
+                    Optional<UserProfile> profileOpt = identityService.getUserProfile(uid);
+                    if (profileOpt.isPresent()) {
+                        UserProfile profile = profileOpt.get();
+                        if (lowerPrompt.contains("主管") || lowerPrompt.contains("负责人") || lowerPrompt.contains("经理")) {
+                            return new ResolvedFromPrompt(identityService.getDepartmentManager(profile.departmentId()).orElse(null), null, List.of());
+                        }
+                        if (profile.directLeaderId() != null) {
+                            return new ResolvedFromPrompt(profile.directLeaderId(), null, List.of());
+                        }
+                    }
+                }
                 if ("getDirectLeader".equals(call.toolName())) {
                     String uid = (String) call.arguments().getOrDefault("userId", initiator);
                     return new ResolvedFromPrompt(identityService.getDirectLeader(uid).orElse(null), null, List.of());
@@ -105,7 +120,27 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             }
         }
 
-        // 2. High-accuracy semantic understanding reasoning (AI Fallback)
+        // 2. High-accuracy semantic understanding & UserProfile penetration
+        Optional<UserProfile> initiatorProfileOpt = identityService.getUserProfile(initiator);
+
+        // 2.1 Department head / manager resolution (dept-aware)
+        if (lowerPrompt.contains("主管") || lowerPrompt.contains("部门负责人") || lowerPrompt.contains("部门经理") || lowerPrompt.contains("head")) {
+            String deptId = null;
+            if (initiatorProfileOpt.isPresent()) {
+                deptId = initiatorProfileOpt.get().departmentId();
+            }
+            if (deptId == null && context != null && context.get("department") != null) {
+                deptId = context.getString("department");
+            }
+            if (deptId != null) {
+                Optional<String> mgrOpt = identityService.getDepartmentManager(deptId);
+                if (mgrOpt.isPresent()) {
+                    return new ResolvedFromPrompt(mgrOpt.get(), null, List.of());
+                }
+            }
+        }
+
+        // 2.2 Direct leader resolution
         if (lowerPrompt.contains("领导") || lowerPrompt.contains("上级") || lowerPrompt.contains("leader") || lowerPrompt.contains("manager")) {
             Optional<String> leaderOpt = identityService.getDirectLeader(initiator);
             if (leaderOpt.isPresent()) {
@@ -113,16 +148,8 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             }
         }
 
-        if (lowerPrompt.contains("主管") || lowerPrompt.contains("部门负责人") || lowerPrompt.contains("head")) {
-            String deptId = context != null && context.get("department") != null ? context.getString("department") : "DEFAULT_DEPT";
-            Optional<String> mgrOpt = identityService.getDepartmentManager(deptId);
-            if (mgrOpt.isPresent()) {
-                return new ResolvedFromPrompt(mgrOpt.get(), null, List.of());
-            }
-        }
-
+        // 2.3 Post / Role resolution
         if (lowerPrompt.contains("岗位") || lowerPrompt.contains("post")) {
-            // Extract post code
             List<String> users = identityService.getUsersByPost(prompt);
             return new ResolvedFromPrompt(null, null, users);
         }
@@ -132,6 +159,6 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
 
     private boolean isNaturalLanguage(String str) {
         if (str == null || str.isBlank()) return false;
-        return str.contains(" ") || str.contains("的") || str.contains("审批") || str.contains("领导") || str.contains("主管");
+        return str.contains(" ") || str.contains("的") || str.contains("审批") || str.contains("领导") || str.contains("主管") || str.contains("负责人");
     }
 }

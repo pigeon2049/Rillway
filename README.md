@@ -251,25 +251,44 @@ WHERE id = 'PO_20260818001';
 
 ---
 
-## 👥 极简组织架构与人员查询 SPI (`IdentityService`)
+## 👥 极简组织架构与人员画像 SPI (`IdentityService`)
 
-为了让流程和自然语言意图无缝支持“张三的直属领导”、“财务部主管”、“具有出纳岗位的员工”，Rillway 提供极简 SPI：
+为了让流程和大模型无缝感知**“发起人是谁、在哪个部门、什么岗位”**，并支持针对不同部门的差异化审批，Rillway 提供全维组织画像 SPI：
 
-### 1. SPI 接口定义
+### 1. 发起人多维组织画像 (`UserProfile`)
+```java
+package com.wegongdu.rillway.core.identity;
+
+public record UserProfile(
+    String userId,           // 用户ID (如 "Alice")
+    String username,         // 用户姓名 (如 "爱丽丝")
+    String departmentId,     // 所属部门编码 (如 "DEPT_RD")
+    String departmentName,   // 部门名称 (如 "核心研发部")
+    String postCode,         // 岗位编码 (如 "DEV_LEAD")
+    List<String> roles,      // 角色列表
+    String directLeaderId,   // 直属领导ID
+    Map<String, Object> extraAttributes // 扩展属性(职级等)
+) implements Serializable {}
+```
+
+### 2. SPI 接口定义
 ```java
 package com.wegongdu.rillway.core.identity;
 
 public interface IdentityService {
+    /** 核心方法：获取用户完整组织身份画像 */
+    Optional<UserProfile> getUserProfile(String userId);
+
     /** 查询用户的直属上级 */
     Optional<String> getDirectLeader(String userId);
 
     /** 查询部门负责人/经理 */
     Optional<String> getDepartmentManager(String departmentId);
 
-    /** 查询指定岗位下的所有人员 (如出纳岗 CASHIER) */
+    /** 查询指定岗位下的所有人员 */
     List<String> getUsersByPost(String postCode);
 
-    /** 查询指定角色下的所有人员 (如财务专员 FINANCE_OFFICER) */
+    /** 查询指定角色下的所有人员 */
     List<String> getUsersByRole(String roleCode);
 
     /** 查询指定部门下的所有人员 */
@@ -277,8 +296,8 @@ public interface IdentityService {
 }
 ```
 
-### 2. 在业务项目 (`gongdu-base` / `ruoyi-vue-pro`) 中极简适配
-只需写一个适配类，对接业务现有的 `sys_user` / `sys_dept` / `sys_post` 表：
+### 3. 在业务项目 (`gongdu-base` / `ruoyi-vue-pro`) 中极简适配
+只需写一个适配类对接业务现有的 `sys_user` / `sys_dept` 表：
 ```java
 @Component
 public class SystemIdentityAdapter implements IdentityService {
@@ -288,10 +307,22 @@ public class SystemIdentityAdapter implements IdentityService {
     private SysDeptService deptService;
 
     @Override
-    public Optional<String> getDirectLeader(String userId) {
-        return Optional.ofNullable(userService.getLeaderUserId(userId));
+    public Optional<UserProfile> getUserProfile(String userId) {
+        SysUser user = userService.getById(userId);
+        if (user == null) return Optional.empty();
+        return Optional.of(UserProfile.builder(userId)
+            .username(user.getNickname())
+            .departmentId(user.getDeptId())
+            .postCode(user.getPostCode())
+            .directLeaderId(user.getLeaderUserId())
+            .build());
     }
-    // ... 对接其他查询
+
+    @Override
+    public Optional<String> getDepartmentManager(String departmentId) {
+        return Optional.ofNullable(deptService.getLeaderUserId(departmentId));
+    }
+    // ...
 }
 ```
 

@@ -1,6 +1,7 @@
 package com.wegongdu.rillway.runtime.identity;
 
 import com.wegongdu.rillway.core.identity.IdentityService;
+import com.wegongdu.rillway.core.identity.UserProfile;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -9,15 +10,37 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory thread-safe implementation of IdentityService.
+ * In-memory thread-safe implementation of IdentityService with UserProfile support.
  */
 public class DefaultIdentityService implements IdentityService {
 
+    private final Map<String, UserProfile> userProfiles = new ConcurrentHashMap<>();
     private final Map<String, String> directLeaders = new ConcurrentHashMap<>();
     private final Map<String, String> departmentManagers = new ConcurrentHashMap<>();
     private final Map<String, List<String>> postUsers = new ConcurrentHashMap<>();
     private final Map<String, List<String>> roleUsers = new ConcurrentHashMap<>();
     private final Map<String, List<String>> departmentUsers = new ConcurrentHashMap<>();
+
+    public DefaultIdentityService registerUserProfile(UserProfile profile) {
+        if (profile != null && profile.userId() != null) {
+            userProfiles.put(profile.userId(), profile);
+            if (profile.directLeaderId() != null) {
+                directLeaders.putIfAbsent(profile.userId(), profile.directLeaderId());
+            }
+            if (profile.departmentId() != null) {
+                departmentUsers.computeIfAbsent(profile.departmentId(), k -> new ArrayList<>()).add(profile.userId());
+            }
+            if (profile.postCode() != null) {
+                postUsers.computeIfAbsent(profile.postCode(), k -> new ArrayList<>()).add(profile.userId());
+            }
+            if (profile.roles() != null) {
+                for (String role : profile.roles()) {
+                    roleUsers.computeIfAbsent(role, k -> new ArrayList<>()).add(profile.userId());
+                }
+            }
+        }
+        return this;
+    }
 
     public DefaultIdentityService registerDirectLeader(String userId, String leaderUserId) {
         if (userId != null && leaderUserId != null) {
@@ -55,9 +78,19 @@ public class DefaultIdentityService implements IdentityService {
     }
 
     @Override
+    public Optional<UserProfile> getUserProfile(String userId) {
+        if (userId == null) return Optional.empty();
+        return Optional.ofNullable(userProfiles.get(userId));
+    }
+
+    @Override
     public Optional<String> getDirectLeader(String userId) {
         if (userId == null) return Optional.empty();
-        return Optional.ofNullable(directLeaders.get(userId));
+        String leader = directLeaders.get(userId);
+        if (leader == null && userProfiles.containsKey(userId)) {
+            leader = userProfiles.get(userId).directLeaderId();
+        }
+        return Optional.ofNullable(leader);
     }
 
     @Override
