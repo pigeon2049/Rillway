@@ -89,6 +89,12 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ObjectMapper rillwayObjectMapper() {
+        return new ObjectMapper().findAndRegisterModules();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public AgentRegistry agentRegistry() {
         return new InMemoryAgentRegistry();
     }
@@ -185,8 +191,11 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public IntentInterpreter intentInterpreter(LlmClient llmClient) {
-        return new LlmIntentInterpreter(llmClient);
+    public IntentInterpreter intentInterpreter(
+            LlmClient llmClient,
+            ObjectProvider<com.wegongdu.rillway.core.identity.OrgEntityRegistry> orgEntityRegistryProvider
+    ) {
+        return new LlmIntentInterpreter(llmClient, orgEntityRegistryProvider.getIfAvailable());
     }
 
     @Bean

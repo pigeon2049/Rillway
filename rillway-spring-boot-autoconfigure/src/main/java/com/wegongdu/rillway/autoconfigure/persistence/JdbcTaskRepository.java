@@ -62,11 +62,15 @@ public class JdbcTaskRepository implements TaskRepository {
     public void update(Task task) {
         String sql = """
             UPDATE rillway_task
-            SET status = ?, completed_at = ?
+            SET assignee_user = ?, assignee_role = ?, candidate_users_json = ?, candidate_roles_json = ?, status = ?, completed_at = ?
             WHERE id = ?
         """;
         jdbcTemplate.update(
                 sql,
+                task.assigneeUser(),
+                task.assigneeRole(),
+                serializeList(task.candidateUsers()),
+                serializeList(task.candidateRoles()),
                 task.status().name(),
                 task.completedAt() != null ? Timestamp.from(task.completedAt()) : null,
                 task.id()

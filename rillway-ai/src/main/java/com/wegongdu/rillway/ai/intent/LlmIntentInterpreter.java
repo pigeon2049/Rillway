@@ -8,6 +8,9 @@ import com.wegongdu.rillway.core.definition.ProcessDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.wegongdu.rillway.core.identity.EntityClassIntrospector;
+import com.wegongdu.rillway.core.identity.OrgEntityRegistry;
+
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -26,10 +29,16 @@ public class LlmIntentInterpreter implements IntentInterpreter {
 
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
+    private final OrgEntityRegistry orgEntityRegistry;
 
     public LlmIntentInterpreter(LlmClient llmClient) {
+        this(llmClient, null);
+    }
+
+    public LlmIntentInterpreter(LlmClient llmClient, OrgEntityRegistry orgEntityRegistry) {
         this.llmClient = Objects.requireNonNull(llmClient, "llmClient must not be null");
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.orgEntityRegistry = orgEntityRegistry;
     }
 
     @Override
@@ -37,7 +46,7 @@ public class LlmIntentInterpreter implements IntentInterpreter {
         String promptText = intent.naturalLanguage();
         log.info("🧠 [LlmIntentInterpreter] 正在使用大模型 Tool Calling 将企业制度编译为流程 DAG:\n{}", promptText);
 
-        // 提取业务表单字段元数据
+        // 1. 提取业务表单字段元数据
         StringBuilder schemaInfo = new StringBuilder();
         if (intent.exampleContext() != null && !intent.exampleContext().variables().isEmpty()) {
             schemaInfo.append("\n【当前业务单据可用字段清单与数据类型】:\n");
@@ -46,6 +55,29 @@ public class LlmIntentInterpreter implements IntentInterpreter {
                 schemaInfo.append("  - 字段名: `").append(k).append("` (数据类型: ").append(typeName).append(")\n");
             });
             schemaInfo.append("请务必严格使用上述字段名编写 RULE 节点的 conditionSpel 表达式。\n");
+        }
+
+        // 2. 提取注册的组织架构实体类 Schema
+        StringBuilder orgInfo = new StringBuilder();
+        if (orgEntityRegistry != null) {
+            orgInfo.append("\n【企业组织架构实体 Schema (基于注册的实体 Class 反射解析)】:\n");
+            if (orgEntityRegistry.userEntityClass() != null) {
+                var meta = EntityClassIntrospector.introspect(orgEntityRegistry.userEntityClass());
+                orgInfo.append(meta.toPromptDescription());
+            }
+            if (orgEntityRegistry.deptEntityClass() != null) {
+                var meta = EntityClassIntrospector.introspect(orgEntityRegistry.deptEntityClass());
+                orgInfo.append(meta.toPromptDescription());
+            }
+            if (orgEntityRegistry.postEntityClass() != null) {
+                var meta = EntityClassIntrospector.introspect(orgEntityRegistry.postEntityClass());
+                orgInfo.append(meta.toPromptDescription());
+            }
+            if (orgEntityRegistry.roleEntityClass() != null) {
+                var meta = EntityClassIntrospector.introspect(orgEntityRegistry.roleEntityClass());
+                orgInfo.append(meta.toPromptDescription());
+            }
+            orgInfo.append("请参考上述实体类的字段名及含义进行审批人路由规则指定与条件判断。\n");
         }
 
         // 1. 定义提供给大模型的 DAG 编译工具
@@ -65,12 +97,12 @@ public class LlmIntentInterpreter implements IntentInterpreter {
             
             要求：
             1. 流程起点必须为 START 节点，终点必须为 END 节点；
-            2. 条件分流使用 RULE 节点，其 `conditionSpel` 为标准的条件表达式（例如 `day <= 3`、`amount > 10000`、`type == '年假'` 等），支持任意业务字段；
+            2. 条件分流使用 RULE 节点，其 `conditionSpel` 为标准的条件表达式（例如 `day <= 3`、`deptName == '研发部'`、`amount > 10000`、`type == '年假'` 等），支持任意业务与组织架构字段；
             3. 人工节点使用 HUMAN 节点，需在 `assigneePrompt` 中指明审批人规则（如 '请假申请人所在部门的直属主管'、'总经理'、'财务总监'）；
             4. 必须通过调用 `buildWorkflowDag` 工具提交生成的 DAG 结构。
-            """ + schemaInfo;
+            """ + schemaInfo + orgInfo;
 
-        String userPrompt = "企业制度描述如下：\n" + promptText + (schemaInfo.length() > 0 ? "\n" + schemaInfo : "");
+        String userPrompt = "企业制度描述如下：\n" + promptText + (schemaInfo.length() > 0 ? "\n" + schemaInfo : "") + (orgInfo.length() > 0 ? "\n" + orgInfo : "");
 
         try {
             LlmClient.LlmResponse response = llmClient.chat(systemPrompt, userPrompt, List.of(dagTool));
