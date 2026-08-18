@@ -9,32 +9,42 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Manages decision cache matching, identity verification, and few-shot reference extraction.
+ * Manages decision cache matching, organizational snapshot verification with TTL, and zero-token fast-path.
  */
 public class ResolutionCacheManager {
 
     private static final Logger log = LoggerFactory.getLogger(ResolutionCacheManager.class);
 
     private final ResolutionCacheRepository cacheRepository;
+    private final Duration defaultTtl;
 
     public ResolutionCacheManager(ResolutionCacheRepository cacheRepository) {
+        this(cacheRepository, Duration.ofDays(7));
+    }
+
+    public ResolutionCacheManager(ResolutionCacheRepository cacheRepository, Duration defaultTtl) {
         this.cacheRepository = cacheRepository != null ? cacheRepository : new InMemoryResolutionCacheRepository();
+        this.defaultTtl = defaultTtl != null ? defaultTtl : Duration.ofDays(7);
     }
 
     /**
-     * Checks if a valid cached resolution exists and verifies its current accuracy against IdentityService.
+     * Checks if a valid cached decision snapshot exists and verifies its current accuracy
+     * against IdentityService (both initiator's and approver's current department and post).
      */
     public Optional<HumanAssigneeResolver.ResolvedAssignee> findValidAssignee(
             String definitionId,
             String nodeId,
             String prompt,
-            UserProfile userProfile,
+            UserProfile currentInitiator,
             IdentityService identityService
     ) {
         if (definitionId == null || nodeId == null || prompt == null || prompt.isBlank()) {
@@ -42,20 +52,23 @@ public class ResolutionCacheManager {
         }
 
         String promptHash = computePromptHash(prompt);
-        String deptId = userProfile != null ? userProfile.departmentId() : null;
-        String postCode = userProfile != null ? userProfile.postCode() : null;
+        String initiatorDeptId = currentInitiator != null ? currentInitiator.departmentId() : null;
+        String initiatorPostCode = currentInitiator != null ? currentInitiator.postCode() : null;
 
-        Optional<ResolutionCache> cacheOpt = cacheRepository.findMatch(definitionId, nodeId, promptHash, deptId, postCode);
+        Optional<ResolutionCache> cacheOpt = cacheRepository.findMatch(
+                definitionId, nodeId, promptHash, initiatorDeptId, initiatorPostCode
+        );
+
         if (cacheOpt.isEmpty()) {
             return Optional.empty();
         }
 
         ResolutionCache cached = cacheOpt.get();
-        boolean verified = verifyCachedAccuracy(prompt, userProfile, cached, identityService);
+        boolean verified = verifySnapshotAccuracy(currentInitiator, cached, identityService);
 
         if (verified) {
-            log.info("ResolutionCache HIT [0 Token]: Node [{}] matched cached assignee [{}] (Hits: {})",
-                    nodeId, cached.resolvedUserId(), cached.hitCount() + 1);
+            log.info("ResolutionCache HIT [0 Token]: Node [{}] matched cached assignee [{}] (Hits: {}, Valid until: {})",
+                    nodeId, cached.resolvedUserId(), cached.hitCount() + 1, cached.expiresAt());
             cacheRepository.save(cached.incrementHit());
             return Optional.of(HumanAssigneeResolver.ResolvedAssignee.of(
                     cached.resolvedUserId(),
@@ -64,7 +77,7 @@ public class ResolutionCacheManager {
                     cached.candidateRoles()
             ));
         } else {
-            log.warn("ResolutionCache INVALIDATED due to organizational change. Node [{}], stale assignee [{}]",
+            log.warn("ResolutionCache INVALIDATED (Expired or organizational profile changed). Node [{}], stale assignee [{}]",
                     nodeId, cached.resolvedUserId());
             cacheRepository.delete(cached.id());
             return Optional.empty();
@@ -72,79 +85,106 @@ public class ResolutionCacheManager {
     }
 
     /**
-     * Saves a newly resolved decision into the cache for future zero-token execution.
+     * Records a newly resolved decision snapshot with initiator/approver organizational fingerprints and TTL.
      */
     public void recordSuccessfulResolution(
             String definitionId,
             String nodeId,
             String prompt,
-            UserProfile userProfile,
-            HumanAssigneeResolver.ResolvedAssignee resolved
+            UserProfile initiatorProfile,
+            HumanAssigneeResolver.ResolvedAssignee resolved,
+            IdentityService identityService
     ) {
         if (definitionId == null || nodeId == null || prompt == null || resolved == null) {
             return;
         }
 
         String promptHash = computePromptHash(prompt);
-        String deptId = userProfile != null ? userProfile.departmentId() : null;
-        String postCode = userProfile != null ? userProfile.postCode() : null;
+        String initiatorUserId = initiatorProfile != null ? initiatorProfile.userId() : null;
+        String initiatorDeptId = initiatorProfile != null ? initiatorProfile.departmentId() : null;
+        String initiatorPostCode = initiatorProfile != null ? initiatorProfile.postCode() : null;
 
+        // Capture approver's current organizational snapshot
+        String resolvedDeptId = null;
+        String resolvedPostCode = null;
+        if (resolved.assigneeUser() != null && identityService != null) {
+            Optional<UserProfile> resolvedProfileOpt = identityService.getUserProfile(resolved.assigneeUser());
+            if (resolvedProfileOpt.isPresent()) {
+                resolvedDeptId = resolvedProfileOpt.get().departmentId();
+                resolvedPostCode = resolvedProfileOpt.get().postCode();
+            }
+        }
+
+        Instant now = Instant.now();
         ResolutionCache cache = ResolutionCache.builder(UUID.randomUUID().toString())
                 .definitionId(definitionId)
                 .nodeId(nodeId)
                 .promptHash(promptHash)
-                .departmentId(deptId)
-                .postCode(postCode)
+                .initiatorUserId(initiatorUserId)
+                .initiatorDeptId(initiatorDeptId)
+                .initiatorPostCode(initiatorPostCode)
                 .resolvedUserId(resolved.assigneeUser())
+                .resolvedDeptId(resolvedDeptId)
+                .resolvedPostCode(resolvedPostCode)
                 .resolvedRole(resolved.assigneeRole())
                 .candidateUsers(resolved.candidateUsers())
                 .candidateRoles(resolved.candidateRoles())
                 .hitCount(0)
+                .expiresAt(now.plus(defaultTtl))
+                .createdAt(now)
+                .updatedAt(now)
                 .build();
 
         cacheRepository.save(cache);
-        log.info("ResolutionCache RECORDED for Node [{}] -> Assignee [{}]", nodeId, resolved.assigneeUser());
+        log.info("ResolutionCache RECORDED for Node [{}] -> Assignee [{}], Dept [{}], TTL [{} days]",
+                nodeId, resolved.assigneeUser(), resolvedDeptId, defaultTtl.toDays());
     }
 
     /**
-     * Retrieves recent successful examples to provide Few-Shot guidance for LLM.
+     * Objective verification:
+     * 1. TTL has not expired.
+     * 2. Initiator's department & post have not changed.
+     * 3. Approver still exists and their department & post have not changed.
      */
-    public List<ResolutionCache> getRecentExamples(String definitionId, String nodeId, int limit) {
-        if (definitionId == null || nodeId == null) return List.of();
-        return cacheRepository.findRecentByDefinitionAndNode(definitionId, nodeId, limit);
-    }
-
-    private boolean verifyCachedAccuracy(
-            String prompt,
-            UserProfile userProfile,
+    private boolean verifySnapshotAccuracy(
+            UserProfile currentInitiator,
             ResolutionCache cached,
             IdentityService identityService
     ) {
-        if (identityService == null || cached.resolvedUserId() == null) {
-            return true; // no SPI available, accept cache
+        // 1. Check TTL expiry
+        if (Instant.now().isAfter(cached.expiresAt())) {
+            return false;
         }
 
-        String lowerPrompt = prompt.toLowerCase();
-
-        // 1. If prompt refers to department head/manager
-        if (lowerPrompt.contains("主管") || lowerPrompt.contains("部门负责人") || lowerPrompt.contains("部门经理")) {
-            if (userProfile != null && userProfile.departmentId() != null) {
-                Optional<String> currentMgr = identityService.getDepartmentManager(userProfile.departmentId());
-                return currentMgr.isPresent() && currentMgr.get().equals(cached.resolvedUserId());
+        // 2. Check initiator's department and post consistency
+        if (currentInitiator != null) {
+            if (!Objects.equals(currentInitiator.departmentId(), cached.initiatorDeptId()) ||
+                !Objects.equals(currentInitiator.postCode(), cached.initiatorPostCode())) {
+                return false;
             }
         }
 
-        // 2. If prompt refers to direct leader
-        if (lowerPrompt.contains("领导") || lowerPrompt.contains("上级") || lowerPrompt.contains("leader")) {
-            if (userProfile != null) {
-                Optional<String> currentLeader = identityService.getDirectLeader(userProfile.userId());
-                return currentLeader.isPresent() && currentLeader.get().equals(cached.resolvedUserId());
+        // 3. Check approver's existence and organizational status
+        if (cached.resolvedUserId() != null && identityService != null) {
+            Optional<UserProfile> currentApproverOpt = identityService.getUserProfile(cached.resolvedUserId());
+            if (currentApproverOpt.isEmpty()) {
+                return false; // Approver no longer exists / has left
+            }
+            UserProfile currentApprover = currentApproverOpt.get();
+            if (cached.resolvedDeptId() != null && !Objects.equals(currentApprover.departmentId(), cached.resolvedDeptId())) {
+                return false; // Approver changed department
+            }
+            if (cached.resolvedPostCode() != null && !Objects.equals(currentApprover.postCode(), cached.resolvedPostCode())) {
+                return false; // Approver changed job post
             }
         }
 
-        // 3. Fallback check if user still exists in system
-        return identityService.getUserProfile(cached.resolvedUserId()).isPresent() ||
-               identityService.getDirectLeader(cached.resolvedUserId()).isPresent();
+        return true;
+    }
+
+    public List<ResolutionCache> getRecentExamples(String definitionId, String nodeId, int limit) {
+        if (definitionId == null || nodeId == null) return List.of();
+        return cacheRepository.findRecentByDefinitionAndNode(definitionId, nodeId, limit);
     }
 
     public static String computePromptHash(String prompt) {

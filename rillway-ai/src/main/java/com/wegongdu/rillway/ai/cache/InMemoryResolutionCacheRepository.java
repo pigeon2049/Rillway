@@ -22,8 +22,8 @@ public class InMemoryResolutionCacheRepository implements ResolutionCacheReposit
                     c.definitionId().equals(cache.definitionId()) &&
                     c.nodeId().equals(cache.nodeId()) &&
                     c.promptHash().equals(cache.promptHash()) &&
-                    Objects.equals(c.departmentId(), cache.departmentId()) &&
-                    Objects.equals(c.postCode(), cache.postCode())
+                    Objects.equals(c.initiatorDeptId(), cache.initiatorDeptId()) &&
+                    Objects.equals(c.initiatorPostCode(), cache.initiatorPostCode())
             );
             storage.put(cache.id(), cache);
         }
@@ -35,8 +35,8 @@ public class InMemoryResolutionCacheRepository implements ResolutionCacheReposit
                 .filter(c -> c.definitionId().equals(definitionId) &&
                              c.nodeId().equals(nodeId) &&
                              c.promptHash().equals(promptHash) &&
-                             Objects.equals(c.departmentId(), departmentId) &&
-                             Objects.equals(c.postCode(), postCode))
+                             Objects.equals(c.initiatorDeptId(), departmentId) &&
+                             Objects.equals(c.initiatorPostCode(), postCode))
                 .findFirst();
     }
 

@@ -2,25 +2,35 @@ package com.wegongdu.rillway.core.model;
 
 import java.io.Serializable;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
 /**
- * Cached successful workflow decision/assignee resolution for Token saving and instant execution.
+ * Cached successful workflow decision snapshot with TTL and organizational state fingerprints.
  */
 public record ResolutionCache(
         String id,
         String definitionId,
         String nodeId,
         String promptHash,
-        String departmentId,
-        String postCode,
+
+        // Initiator snapshot when resolved
+        String initiatorUserId,
+        String initiatorDeptId,
+        String initiatorPostCode,
+
+        // Resolved assignee snapshot when resolved
         String resolvedUserId,
+        String resolvedDeptId,
+        String resolvedPostCode,
         String resolvedRole,
         List<String> candidateUsers,
         List<String> candidateRoles,
+
         int hitCount,
+        Instant expiresAt,
         Instant createdAt,
         Instant updatedAt
 ) implements Serializable {
@@ -34,6 +44,7 @@ public record ResolutionCache(
         candidateRoles = candidateRoles != null ? List.copyOf(candidateRoles) : Collections.emptyList();
         if (createdAt == null) createdAt = Instant.now();
         if (updatedAt == null) updatedAt = Instant.now();
+        if (expiresAt == null) expiresAt = createdAt.plus(7, ChronoUnit.DAYS); // default 7 days TTL
     }
 
     public ResolutionCache incrementHit() {
@@ -42,13 +53,17 @@ public record ResolutionCache(
                 definitionId,
                 nodeId,
                 promptHash,
-                departmentId,
-                postCode,
+                initiatorUserId,
+                initiatorDeptId,
+                initiatorPostCode,
                 resolvedUserId,
+                resolvedDeptId,
+                resolvedPostCode,
                 resolvedRole,
                 candidateUsers,
                 candidateRoles,
                 hitCount + 1,
+                expiresAt,
                 createdAt,
                 Instant.now()
         );
@@ -63,13 +78,17 @@ public record ResolutionCache(
         private String definitionId;
         private String nodeId;
         private String promptHash;
-        private String departmentId;
-        private String postCode;
+        private String initiatorUserId;
+        private String initiatorDeptId;
+        private String initiatorPostCode;
         private String resolvedUserId;
+        private String resolvedDeptId;
+        private String resolvedPostCode;
         private String resolvedRole;
         private List<String> candidateUsers;
         private List<String> candidateRoles;
         private int hitCount = 0;
+        private Instant expiresAt;
         private Instant createdAt;
         private Instant updatedAt;
 
@@ -92,18 +111,33 @@ public record ResolutionCache(
             return this;
         }
 
-        public Builder departmentId(String departmentId) {
-            this.departmentId = departmentId;
+        public Builder initiatorUserId(String initiatorUserId) {
+            this.initiatorUserId = initiatorUserId;
             return this;
         }
 
-        public Builder postCode(String postCode) {
-            this.postCode = postCode;
+        public Builder initiatorDeptId(String initiatorDeptId) {
+            this.initiatorDeptId = initiatorDeptId;
+            return this;
+        }
+
+        public Builder initiatorPostCode(String initiatorPostCode) {
+            this.initiatorPostCode = initiatorPostCode;
             return this;
         }
 
         public Builder resolvedUserId(String resolvedUserId) {
             this.resolvedUserId = resolvedUserId;
+            return this;
+        }
+
+        public Builder resolvedDeptId(String resolvedDeptId) {
+            this.resolvedDeptId = resolvedDeptId;
+            return this;
+        }
+
+        public Builder resolvedPostCode(String resolvedPostCode) {
+            this.resolvedPostCode = resolvedPostCode;
             return this;
         }
 
@@ -127,19 +161,38 @@ public record ResolutionCache(
             return this;
         }
 
+        public Builder expiresAt(Instant expiresAt) {
+            this.expiresAt = expiresAt;
+            return this;
+        }
+
+        public Builder createdAt(Instant createdAt) {
+            this.createdAt = createdAt;
+            return this;
+        }
+
+        public Builder updatedAt(Instant updatedAt) {
+            this.updatedAt = updatedAt;
+            return this;
+        }
+
         public ResolutionCache build() {
             return new ResolutionCache(
                     id,
                     definitionId,
                     nodeId,
                     promptHash,
-                    departmentId,
-                    postCode,
+                    initiatorUserId,
+                    initiatorDeptId,
+                    initiatorPostCode,
                     resolvedUserId,
+                    resolvedDeptId,
+                    resolvedPostCode,
                     resolvedRole,
                     candidateUsers,
                     candidateRoles,
                     hitCount,
+                    expiresAt,
                     createdAt,
                     updatedAt
             );

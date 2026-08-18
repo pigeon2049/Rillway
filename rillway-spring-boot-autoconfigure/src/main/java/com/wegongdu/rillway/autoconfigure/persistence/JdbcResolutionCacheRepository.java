@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * JDBC implementation of ResolutionCacheRepository.
+ * JDBC implementation of ResolutionCacheRepository with snapshot and TTL support.
  */
 public class JdbcResolutionCacheRepository implements ResolutionCacheRepository {
 
@@ -35,26 +35,28 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
         String deleteSql = """
             DELETE FROM rillway_resolution_cache
             WHERE definition_id = ? AND node_id = ? AND prompt_hash = ?
-            AND ((department_id IS NULL AND ? IS NULL) OR department_id = ?)
-            AND ((post_code IS NULL AND ? IS NULL) OR post_code = ?)
+            AND ((initiator_dept_id IS NULL AND ? IS NULL) OR initiator_dept_id = ?)
+            AND ((initiator_post_code IS NULL AND ? IS NULL) OR initiator_post_code = ?)
         """;
         jdbcTemplate.update(
                 deleteSql,
                 cache.definitionId(),
                 cache.nodeId(),
                 cache.promptHash(),
-                cache.departmentId(),
-                cache.departmentId(),
-                cache.postCode(),
-                cache.postCode()
+                cache.initiatorDeptId(),
+                cache.initiatorDeptId(),
+                cache.initiatorPostCode(),
+                cache.initiatorPostCode()
         );
 
         String insertSql = """
             INSERT INTO rillway_resolution_cache (
-                id, definition_id, node_id, prompt_hash, department_id, post_code,
-                resolved_user_id, resolved_role, candidate_users_json, candidate_roles_json,
-                hit_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, definition_id, node_id, prompt_hash,
+                initiator_user_id, initiator_dept_id, initiator_post_code,
+                resolved_user_id, resolved_dept_id, resolved_post_code, resolved_role,
+                candidate_users_json, candidate_roles_json, hit_count,
+                expires_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         jdbcTemplate.update(
                 insertSql,
@@ -62,13 +64,17 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
                 cache.definitionId(),
                 cache.nodeId(),
                 cache.promptHash(),
-                cache.departmentId(),
-                cache.postCode(),
+                cache.initiatorUserId(),
+                cache.initiatorDeptId(),
+                cache.initiatorPostCode(),
                 cache.resolvedUserId(),
+                cache.resolvedDeptId(),
+                cache.resolvedPostCode(),
                 cache.resolvedRole(),
                 serializeList(cache.candidateUsers()),
                 serializeList(cache.candidateRoles()),
                 cache.hitCount(),
+                Timestamp.from(cache.expiresAt()),
                 Timestamp.from(cache.createdAt()),
                 Timestamp.from(cache.updatedAt())
         );
@@ -79,8 +85,8 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
         String sql = """
             SELECT * FROM rillway_resolution_cache
             WHERE definition_id = ? AND node_id = ? AND prompt_hash = ?
-            AND ((department_id IS NULL AND ? IS NULL) OR department_id = ?)
-            AND ((post_code IS NULL AND ? IS NULL) OR post_code = ?)
+            AND ((initiator_dept_id IS NULL AND ? IS NULL) OR initiator_dept_id = ?)
+            AND ((initiator_post_code IS NULL AND ? IS NULL) OR initiator_post_code = ?)
         """;
         List<ResolutionCache> list = jdbcTemplate.query(
                 sql,
@@ -130,6 +136,7 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
     private class CacheRowMapper implements RowMapper<ResolutionCache> {
         @Override
         public ResolutionCache mapRow(ResultSet rs, int rowNum) throws SQLException {
+            Timestamp expiresAt = rs.getTimestamp("expires_at");
             Timestamp createdAt = rs.getTimestamp("created_at");
             Timestamp updatedAt = rs.getTimestamp("updated_at");
 
@@ -138,13 +145,17 @@ public class JdbcResolutionCacheRepository implements ResolutionCacheRepository 
                     rs.getString("definition_id"),
                     rs.getString("node_id"),
                     rs.getString("prompt_hash"),
-                    rs.getString("department_id"),
-                    rs.getString("post_code"),
+                    rs.getString("initiator_user_id"),
+                    rs.getString("initiator_dept_id"),
+                    rs.getString("initiator_post_code"),
                     rs.getString("resolved_user_id"),
+                    rs.getString("resolved_dept_id"),
+                    rs.getString("resolved_post_code"),
                     rs.getString("resolved_role"),
                     deserializeList(rs.getString("candidate_users_json")),
                     deserializeList(rs.getString("candidate_roles_json")),
                     rs.getInt("hit_count"),
+                    expiresAt != null ? expiresAt.toInstant() : Instant.now(),
                     createdAt != null ? createdAt.toInstant() : Instant.now(),
                     updatedAt != null ? updatedAt.toInstant() : Instant.now()
             );

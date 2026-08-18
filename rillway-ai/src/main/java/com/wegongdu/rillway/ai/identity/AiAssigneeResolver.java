@@ -9,6 +9,8 @@ import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.core.identity.IdentityService;
 import com.wegongdu.rillway.core.identity.UserProfile;
 import com.wegongdu.rillway.core.node.HumanNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,9 +19,11 @@ import java.util.Optional;
 
 /**
  * AI-native human assignee resolver powered by LLMs, UserProfiles, organizational Tool Calling,
- * and ResolutionCache for zero-token acceleration and identity verification.
+ * and Snapshot-based ResolutionCache for zero-token execution.
  */
 public class AiAssigneeResolver implements HumanAssigneeResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(AiAssigneeResolver.class);
 
     private final LlmClient llmClient;
     private final IdentityService identityService;
@@ -62,7 +66,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             String initiator = context != null && context.initiator() != null ? context.initiator() : "default_user";
             UserProfile initiatorProfile = identityService.getUserProfile(initiator).orElse(null);
 
-            // 1. Fast-Path: Check valid decision cache (0 Token)
+            // 1. Fast-Path: Check valid organizational snapshot decision cache (0 Token)
             Optional<ResolvedAssignee> cachedOpt = cacheManager.findValidAssignee(
                     node.id(),
                     node.id(),
@@ -75,124 +79,153 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
                 return cachedOpt.get();
             }
 
-            // 2. Slow-Path: Resolve with LLM Tool Calling or Semantic Reasoner
-            ResolvedFromPrompt result = resolveWithAiOrSemantic(targetPrompt, context, initiatorProfile);
-            if (result.userId != null) {
-                assigneeUser = result.userId;
+            // 2. Slow-Path: Resolve with standard LLM Tool Calling loop
+            ResolvedAssignee newlyResolved = executeLlmToolCallingLoop(targetPrompt, context, initiatorProfile);
+            if (newlyResolved.assigneeUser() != null) {
+                assigneeUser = newlyResolved.assigneeUser();
             }
-            if (result.roleCode != null) {
-                assigneeRole = result.roleCode;
+            if (newlyResolved.assigneeRole() != null) {
+                assigneeRole = newlyResolved.assigneeRole();
             }
-            if (result.candidateUsers != null && !result.candidateUsers.isEmpty()) {
-                candidateUsers.addAll(result.candidateUsers);
+            if (!newlyResolved.candidateUsers().isEmpty()) {
+                candidateUsers.addAll(newlyResolved.candidateUsers());
+            }
+            if (!newlyResolved.candidateRoles().isEmpty()) {
+                candidateRoles.addAll(newlyResolved.candidateRoles());
             }
 
-            // 3. Record successful resolution into cache for future zero-token execution
-            ResolvedAssignee newlyResolved = ResolvedAssignee.of(assigneeUser, assigneeRole, candidateUsers, candidateRoles);
+            // 3. Record successful snapshot into cache with TTL for future zero-token execution
+            ResolvedAssignee finalResult = ResolvedAssignee.of(assigneeUser, assigneeRole, candidateUsers, candidateRoles);
             if (assigneeUser != null || assigneeRole != null || !candidateUsers.isEmpty()) {
                 cacheManager.recordSuccessfulResolution(
                         node.id(),
                         node.id(),
                         targetPrompt,
                         initiatorProfile,
-                        newlyResolved
+                        finalResult,
+                        identityService
                 );
             }
 
-            return newlyResolved;
+            return finalResult;
         }
 
         return ResolvedAssignee.of(assigneeUser, assigneeRole, candidateUsers, candidateRoles);
     }
 
-    private record ResolvedFromPrompt(String userId, String roleCode, List<String> candidateUsers) {}
+    /**
+     * Standard LLM Tool Calling loop without any hardcoded prompt guessing.
+     */
+    private ResolvedAssignee executeLlmToolCallingLoop(String prompt, ProcessContext context, UserProfile initiatorProfile) {
+        String initiator = initiatorProfile != null ? initiatorProfile.userId() : (context != null ? context.initiator() : "default_user");
 
-    private ResolvedFromPrompt resolveWithAiOrSemantic(String prompt, ProcessContext context, UserProfile initiatorProfile) {
-        String initiator = context != null && context.initiator() != null ? context.initiator() : "default_user";
-        String lowerPrompt = prompt.toLowerCase();
-
-        // 1. Check if LLM client provides Tool Calling
-        List<LlmClient.ToolDefinition> tools = List.of(
+        List<LlmClient.ToolDefinition> availableTools = List.of(
                 new LlmClient.ToolDefinition("getUserProfile", "Get complete organizational profile of a user (department, post, roles, leader)", Map.of("userId", "string")),
-                new LlmClient.ToolDefinition("getDirectLeader", "Get direct leader of a user", Map.of("userId", "string")),
-                new LlmClient.ToolDefinition("getDepartmentManager", "Get manager of a department", Map.of("departmentId", "string")),
-                new LlmClient.ToolDefinition("getUsersByPost", "Get users belonging to a post/job position", Map.of("postCode", "string")),
-                new LlmClient.ToolDefinition("getUsersByRole", "Get users having a role", Map.of("roleCode", "string"))
+                new LlmClient.ToolDefinition("getDirectLeader", "Get direct leader user ID of a user", Map.of("userId", "string")),
+                new LlmClient.ToolDefinition("getDepartmentManager", "Get manager user ID of a department", Map.of("departmentId", "string")),
+                new LlmClient.ToolDefinition("getUsersByPost", "Get list of user IDs belonging to a post", Map.of("postCode", "string")),
+                new LlmClient.ToolDefinition("getUsersByRole", "Get list of user IDs having a role", Map.of("roleCode", "string")),
+                new LlmClient.ToolDefinition("getUsersByDepartment", "Get list of user IDs in a department", Map.of("departmentId", "string"))
         );
 
-        LlmClient.LlmResponse response = llmClient.chat(
-                "You are an organizational identity resolution agent. Analyze the intent and call the appropriate tools to find the assignee.",
-                "Initiator: " + initiator + ", Prompt: " + prompt + ", Context: " + (context != null ? context.variables() : "{}"),
-                tools
-        );
+        String systemPrompt = """
+            You are an AI-Native organizational workflow dispatcher.
+            Analyze the user's intent and use the provided tools to query the organization structure.
+            Once you determine the appropriate approver(s), reply with a clear decision.
+            """;
+
+        String userPrompt = "Initiator: " + initiator + ", Prompt: " + prompt + ", Variables: " + (context != null ? context.variables() : "{}");
+
+        LlmClient.LlmResponse response = llmClient.chat(systemPrompt, userPrompt, availableTools);
+
+        String resolvedUser = null;
+        String resolvedRole = null;
+        List<String> candidateUsers = new ArrayList<>();
 
         if (response.hasToolCalls()) {
+            List<LlmClient.ToolResult> toolResults = new ArrayList<>();
             for (LlmClient.ToolCall call : response.toolCalls()) {
-                if ("getUserProfile".equals(call.toolName())) {
-                    String uid = (String) call.arguments().getOrDefault("userId", initiator);
-                    Optional<UserProfile> profileOpt = identityService.getUserProfile(uid);
-                    if (profileOpt.isPresent()) {
-                        UserProfile profile = profileOpt.get();
-                        if (lowerPrompt.contains("主管") || lowerPrompt.contains("负责人") || lowerPrompt.contains("经理")) {
-                            return new ResolvedFromPrompt(identityService.getDepartmentManager(profile.departmentId()).orElse(null), null, List.of());
-                        }
-                        if (profile.directLeaderId() != null) {
-                            return new ResolvedFromPrompt(profile.directLeaderId(), null, List.of());
+                Object toolOutput = executeSingleTool(call, initiator);
+                toolResults.add(new LlmClient.ToolResult(call.callId(), call.toolName(), toolOutput));
+
+                // Direct resolution extraction from standard tool calls
+                if (toolOutput instanceof String uid) {
+                    resolvedUser = uid;
+                } else if (toolOutput instanceof Optional<?> opt && opt.isPresent()) {
+                    Object val = opt.get();
+                    if (val instanceof String s) {
+                        resolvedUser = s;
+                    } else if (val instanceof UserProfile up) {
+                        // User profile queried, can be used for further decision
+                        if (up.directLeaderId() != null) {
+                            resolvedUser = up.directLeaderId();
                         }
                     }
+                } else if (toolOutput instanceof List<?> list) {
+                    for (Object item : list) {
+                        if (item instanceof String s) candidateUsers.add(s);
+                    }
                 }
-                if ("getDirectLeader".equals(call.toolName())) {
-                    String uid = (String) call.arguments().getOrDefault("userId", initiator);
-                    return new ResolvedFromPrompt(identityService.getDirectLeader(uid).orElse(null), null, List.of());
-                }
-                if ("getDepartmentManager".equals(call.toolName())) {
-                    String deptId = (String) call.arguments().get("departmentId");
-                    return new ResolvedFromPrompt(identityService.getDepartmentManager(deptId).orElse(null), null, List.of());
-                }
-                if ("getUsersByPost".equals(call.toolName())) {
-                    String postCode = (String) call.arguments().get("postCode");
-                    return new ResolvedFromPrompt(null, null, identityService.getUsersByPost(postCode));
-                }
-                if ("getUsersByRole".equals(call.toolName())) {
-                    String roleCode = (String) call.arguments().get("roleCode");
-                    return new ResolvedFromPrompt(null, roleCode, identityService.getUsersByRole(roleCode));
+            }
+
+            // Continue conversation with tool outputs if needed
+            LlmClient.LlmResponse followUp = llmClient.continueChat(systemPrompt, userPrompt, toolResults);
+            if (followUp != null && followUp.content() != null && !followUp.content().isBlank()) {
+                // If LLM returned a specific username or identifier
+                if (resolvedUser == null && !followUp.content().contains(" ")) {
+                    resolvedUser = followUp.content().trim();
                 }
             }
         }
 
-        // 2. High-accuracy semantic understanding & UserProfile penetration
-        // 2.1 Department head / manager resolution (dept-aware)
-        if (lowerPrompt.contains("主管") || lowerPrompt.contains("部门负责人") || lowerPrompt.contains("部门经理") || lowerPrompt.contains("head")) {
-            String deptId = null;
-            if (initiatorProfile != null) {
-                deptId = initiatorProfile.departmentId();
-            }
-            if (deptId == null && context != null && context.get("department") != null) {
-                deptId = context.getString("department");
-            }
-            if (deptId != null) {
-                Optional<String> mgrOpt = identityService.getDepartmentManager(deptId);
-                if (mgrOpt.isPresent()) {
-                    return new ResolvedFromPrompt(mgrOpt.get(), null, List.of());
+        // Fallback resolution using IdentityService when running in standalone mode without LLM provider
+        if (resolvedUser == null && candidateUsers.isEmpty()) {
+            if (initiatorProfile != null && initiatorProfile.departmentId() != null) {
+                Optional<String> deptMgr = identityService.getDepartmentManager(initiatorProfile.departmentId());
+                if (deptMgr.isPresent()) {
+                    resolvedUser = deptMgr.get();
+                } else if (initiatorProfile.directLeaderId() != null) {
+                    resolvedUser = initiatorProfile.directLeaderId();
                 }
+            } else if (identityService != null) {
+                resolvedUser = identityService.getDirectLeader(initiator).orElse(null);
             }
         }
 
-        // 2.2 Direct leader resolution
-        if (lowerPrompt.contains("领导") || lowerPrompt.contains("上级") || lowerPrompt.contains("leader") || lowerPrompt.contains("manager")) {
-            Optional<String> leaderOpt = identityService.getDirectLeader(initiator);
-            if (leaderOpt.isPresent()) {
-                return new ResolvedFromPrompt(leaderOpt.get(), null, List.of());
+        return ResolvedAssignee.of(resolvedUser, resolvedRole, candidateUsers, List.of());
+    }
+
+    private Object executeSingleTool(LlmClient.ToolCall call, String defaultInitiator) {
+        String toolName = call.toolName();
+        Map<String, Object> args = call.arguments() != null ? call.arguments() : Map.of();
+
+        return switch (toolName) {
+            case "getUserProfile" -> {
+                String uid = (String) args.getOrDefault("userId", defaultInitiator);
+                yield identityService.getUserProfile(uid);
             }
-        }
-
-        // 2.3 Post / Role resolution
-        if (lowerPrompt.contains("岗位") || lowerPrompt.contains("post")) {
-            List<String> users = identityService.getUsersByPost(prompt);
-            return new ResolvedFromPrompt(null, null, users);
-        }
-
-        return new ResolvedFromPrompt(null, null, List.of());
+            case "getDirectLeader" -> {
+                String uid = (String) args.getOrDefault("userId", defaultInitiator);
+                yield identityService.getDirectLeader(uid);
+            }
+            case "getDepartmentManager" -> {
+                String deptId = (String) args.get("departmentId");
+                yield identityService.getDepartmentManager(deptId);
+            }
+            case "getUsersByPost" -> {
+                String postCode = (String) args.get("postCode");
+                yield identityService.getUsersByPost(postCode);
+            }
+            case "getUsersByRole" -> {
+                String roleCode = (String) args.get("roleCode");
+                yield identityService.getUsersByRole(roleCode);
+            }
+            case "getUsersByDepartment" -> {
+                String deptId = (String) args.get("departmentId");
+                yield identityService.getUsersByDepartment(deptId);
+            }
+            default -> "UNKNOWN_TOOL: " + toolName;
+        };
     }
 
     private boolean isNaturalLanguage(String str) {

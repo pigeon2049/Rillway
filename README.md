@@ -345,23 +345,25 @@ public class SystemIdentityAdapter implements IdentityService {
 
 ---
 
-### 4. 成功流程决策缓存与人事核验机制 (ResolutionCache & 0 Token Fast-Path)
+### 4. 成功流程决策缓存与组织快照核验 (Snapshot-based Cache with TTL)
 
-为了大幅节省大模型 Token 成本并提升审批流转性能，Rillway 内置了**带人事核验的成功决策缓存表**（`rillway_resolution_cache`）：
+为了大幅节省大模型 Token 成本并提升审批流转性能，Rillway 实现了**基于组织架构快照与 TTL 有效期的决策缓存机制**（`rillway_resolution_cache`）：
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│ 1. 首次解析：大模型 Tool Calling 推理并记录成功缓存样本      │
-│ 2. 再次执行：相同部门/岗位相同单据触发 0 Token 极速通道     │
-│ 3. 轻量核验：毫秒级调用 IdentityService 核验人员是否变更    │
-│    • 一致有效 -> 0 Token 消耗，2ms 极速返回！                │
-│    • 人事变动 -> 自动失效缓存，触发大模型重新推理并自进化    │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1. 首次决策：大模型 Tool Calling 推理，记录发起人与审批人的组织快照     │
+│    • 记录: (initiator_dept_id, initiator_post_code,                     │
+│             resolved_dept_id, resolved_post_code, expires_at 7天有效)  │
+│ 2. 再次执行：在有效期内发起同类单据时触发 0 Token 极速通道              │
+│ 3. 客观核验：毫秒级调用 IdentityService 比对双方部门/岗位是否变更      │
+│    • 双方组织快照未变 -> 0 Token 消耗，2ms 极速返回！                   │
+│    • 发生调岗/离职/变更 -> 自动识别失效，触发大模型重新推理并自愈更新快照│
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **自动建表 `rillway_resolution_cache`**：记录 `definition_id`、`node_id`、`prompt_hash`、`department_id`、`resolved_user_id`、`hit_count`；
-- **90%+ Token 节省**：相同部门的日常重复审批（报销、采购、请假）直接命中缓存；
-- **绝对准确**：即使命中缓存，也会在微秒级内向业务 `IdentityService` 核验该主管是否离职/调岗，杜绝脏数据。
+- **自动建表 `rillway_resolution_cache`**：记录流程提示词指纹、双方人员部门/岗位组织快照、`expires_at` 有效期、`hit_count`；
+- **90%+ Token 节省**：同部门员工高频提交的日常审批在有效期内直接命中缓存；
+- **客观绝对准确**：不依赖任何脆弱的 Prompt 关键词硬编码，纯粹通过客观的组织人事快照比对，自动感知人员调岗变动。
 
 ---
 
