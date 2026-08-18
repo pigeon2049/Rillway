@@ -65,11 +65,14 @@ public class JdbcBindingConfigRepository implements BindingConfigRepository {
         return list.stream().filter(BindingConfig::enabled).findFirst();
     }
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(JdbcBindingConfigRepository.class);
+
     @Override
     public Optional<BindingConfig> findMatching(String identifier) {
         if (identifier == null) return Optional.empty();
         String sql = "SELECT * FROM rillway_binding_config WHERE LOWER(business_type) = LOWER(?) OR LOWER(table_name) = LOWER(?)";
         List<BindingConfig> list = jdbcTemplate.query(sql, new BindingConfigRowMapper(), identifier, identifier);
+        log.info("[JdbcBindingConfigRepository] findMatching identifier='{}', found count={}, list={}", identifier, list.size(), list);
         return list.stream().filter(BindingConfig::enabled).findFirst();
     }
 
@@ -95,6 +98,19 @@ public class JdbcBindingConfigRepository implements BindingConfigRepository {
                 prompt = rs.getString("process_prompt");
             } catch (Exception ignored) {}
 
+            boolean enabled = true;
+            try {
+                Object enabledObj = rs.getObject("enabled");
+                if (enabledObj instanceof Boolean b) {
+                    enabled = b;
+                } else if (enabledObj instanceof Number n) {
+                    enabled = n.intValue() != 0;
+                } else if (enabledObj != null) {
+                    String str = enabledObj.toString().trim();
+                    enabled = "1".equals(str) || "true".equalsIgnoreCase(str);
+                }
+            } catch (Exception ignored) {}
+
             return new BindingConfig(
                     rs.getString("id"),
                     rs.getString("business_type"),
@@ -106,7 +122,7 @@ public class JdbcBindingConfigRepository implements BindingConfigRepository {
                     rs.getString("approved_value"),
                     rs.getString("rejected_value"),
                     rs.getString("running_value"),
-                    rs.getBoolean("enabled")
+                    enabled
             );
         }
     }

@@ -29,7 +29,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_instance")) {
             log.info("Rillway table [rillway_instance] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_instance (
+                CREATE TABLE IF NOT EXISTS rillway_instance (
                     id VARCHAR(64) PRIMARY KEY,
                     business_key VARCHAR(128),
                     definition_id VARCHAR(64) NOT NULL,
@@ -46,7 +46,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_task")) {
             log.info("Rillway table [rillway_task] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_task (
+                CREATE TABLE IF NOT EXISTS rillway_task (
                     id VARCHAR(64) PRIMARY KEY,
                     process_instance_id VARCHAR(64) NOT NULL,
                     business_key VARCHAR(128),
@@ -67,7 +67,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_history")) {
             log.info("Rillway table [rillway_history] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_history (
+                CREATE TABLE IF NOT EXISTS rillway_history (
                     id VARCHAR(64) PRIMARY KEY,
                     process_instance_id VARCHAR(64) NOT NULL,
                     node_id VARCHAR(64) NOT NULL,
@@ -85,13 +85,13 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_binding_config")) {
             log.info("Rillway table [rillway_binding_config] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_binding_config (
+                CREATE TABLE IF NOT EXISTS rillway_binding_config (
                     id VARCHAR(64) PRIMARY KEY,
                     business_type VARCHAR(64) NOT NULL,
-                    process_definition_id VARCHAR(64) NOT NULL,
+                    process_definition_id VARCHAR(64) DEFAULT '',
                     process_prompt TEXT,
                     table_name VARCHAR(128) NOT NULL,
-                    primary_key_column VARCHAR(64) NOT NULL,
+                    primary_key_column VARCHAR(64) DEFAULT 'id',
                     status_column VARCHAR(64) NOT NULL,
                     approved_value VARCHAR(64) NOT NULL,
                     rejected_value VARCHAR(64) NOT NULL,
@@ -104,7 +104,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_resolution_cache")) {
             log.info("Rillway table [rillway_resolution_cache] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_resolution_cache (
+                CREATE TABLE IF NOT EXISTS rillway_resolution_cache (
                     id VARCHAR(64) PRIMARY KEY,
                     definition_id VARCHAR(64) NOT NULL,
                     node_id VARCHAR(64) NOT NULL,
@@ -130,7 +130,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_ai_config")) {
             log.info("Rillway table [rillway_ai_config] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_ai_config (
+                CREATE TABLE IF NOT EXISTS rillway_ai_config (
                     id VARCHAR(64) PRIMARY KEY,
                     provider_name VARCHAR(64) NOT NULL,
                     base_url VARCHAR(256) NOT NULL,
@@ -148,7 +148,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
         if (!tableExists("rillway_ai_trace")) {
             log.info("Rillway table [rillway_ai_trace] not found. Creating table automatically...");
             jdbcTemplate.execute("""
-                CREATE TABLE rillway_ai_trace (
+                CREATE TABLE IF NOT EXISTS rillway_ai_trace (
                     id VARCHAR(64) PRIMARY KEY,
                     trace_id VARCHAR(64),
                     node_id VARCHAR(64),
@@ -175,7 +175,7 @@ public class RillwayDatabaseInitializer implements InitializingBean {
 
     private boolean tableExists(String tableName) {
         try {
-            jdbcTemplate.queryForObject("SELECT 1 FROM " + tableName + " WHERE 1 = 0", Integer.class);
+            jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
             return true;
         } catch (Exception e) {
             return false;
