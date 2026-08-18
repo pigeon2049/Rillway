@@ -37,6 +37,17 @@ public class LlmIntentInterpreter implements IntentInterpreter {
         String promptText = intent.naturalLanguage();
         log.info("🧠 [LlmIntentInterpreter] 正在使用大模型 Tool Calling 将企业制度编译为流程 DAG:\n{}", promptText);
 
+        // 提取业务表单字段元数据
+        StringBuilder schemaInfo = new StringBuilder();
+        if (intent.exampleContext() != null && !intent.exampleContext().variables().isEmpty()) {
+            schemaInfo.append("\n【当前业务单据可用字段清单与数据类型】:\n");
+            intent.exampleContext().variables().forEach((k, v) -> {
+                String typeName = v != null ? v.getClass().getSimpleName() : "Object";
+                schemaInfo.append("  - 字段名: `").append(k).append("` (数据类型: ").append(typeName).append(")\n");
+            });
+            schemaInfo.append("请务必严格使用上述字段名编写 RULE 节点的 conditionSpel 表达式。\n");
+        }
+
         // 1. 定义提供给大模型的 DAG 编译工具
         LlmClient.ToolDefinition dagTool = new LlmClient.ToolDefinition(
                 "buildWorkflowDag",
@@ -54,12 +65,12 @@ public class LlmIntentInterpreter implements IntentInterpreter {
             
             要求：
             1. 流程起点必须为 START 节点，终点必须为 END 节点；
-            2. 条件分流使用 RULE 节点，其 `conditionSpel` 为标准的条件表达式（例如 `day <= 3`、`amount > 10000` 等），支持任意业务字段；
+            2. 条件分流使用 RULE 节点，其 `conditionSpel` 为标准的条件表达式（例如 `day <= 3`、`amount > 10000`、`type == '年假'` 等），支持任意业务字段；
             3. 人工节点使用 HUMAN 节点，需在 `assigneePrompt` 中指明审批人规则（如 '请假申请人所在部门的直属主管'、'总经理'、'财务总监'）；
             4. 必须通过调用 `buildWorkflowDag` 工具提交生成的 DAG 结构。
-            """;
+            """ + schemaInfo;
 
-        String userPrompt = "企业制度描述如下：\n" + promptText;
+        String userPrompt = "企业制度描述如下：\n" + promptText + (schemaInfo.length() > 0 ? "\n" + schemaInfo : "");
 
         try {
             LlmClient.LlmResponse response = llmClient.chat(systemPrompt, userPrompt, List.of(dagTool));
