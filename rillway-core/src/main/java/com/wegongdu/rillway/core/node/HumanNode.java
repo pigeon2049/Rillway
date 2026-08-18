@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Human decision/approval node.
+ * Human decision/approval node with natural language prompt support for AI resolution.
  */
 public record HumanNode(
         String id,
@@ -14,8 +14,20 @@ public record HumanNode(
         String assigneeUser,
         String assigneeRole,
         List<String> candidateUsers,
-        List<String> candidateRoles
+        List<String> candidateRoles,
+        String assigneePrompt
 ) implements Node {
+
+    public HumanNode(
+            String id,
+            String name,
+            String assigneeUser,
+            String assigneeRole,
+            List<String> candidateUsers,
+            List<String> candidateRoles
+    ) {
+        this(id, name, assigneeUser, assigneeRole, candidateUsers, candidateRoles, null);
+    }
 
     public HumanNode {
         Objects.requireNonNull(id, "id must not be null");
@@ -42,6 +54,7 @@ public record HumanNode(
         private String assigneeRole;
         private List<String> candidateUsers;
         private List<String> candidateRoles;
+        private String assigneePrompt;
 
         public Builder(String id) {
             this.id = id;
@@ -62,6 +75,11 @@ public record HumanNode(
             return this;
         }
 
+        public Builder assigneePrompt(String assigneePrompt) {
+            this.assigneePrompt = assigneePrompt;
+            return this;
+        }
+
         public Builder candidateUsers(List<String> candidateUsers) {
             this.candidateUsers = candidateUsers;
             return this;
@@ -73,7 +91,7 @@ public record HumanNode(
         }
 
         public HumanNode build() {
-            return new HumanNode(id, name, assigneeUser, assigneeRole, candidateUsers, candidateRoles);
+            return new HumanNode(id, name, assigneeUser, assigneeRole, candidateUsers, candidateRoles, assigneePrompt);
         }
     }
 }

@@ -6,6 +6,9 @@ import com.wegongdu.rillway.agent.registry.InMemoryAgentRegistry;
 import com.wegongdu.rillway.agent.spi.AgentRegistry;
 import com.wegongdu.rillway.ai.intent.FakeIntentInterpreter;
 import com.wegongdu.rillway.ai.intent.IntentInterpreter;
+import com.wegongdu.rillway.ai.identity.AiAssigneeResolver;
+import com.wegongdu.rillway.ai.llm.FakeLlmClient;
+import com.wegongdu.rillway.ai.llm.LlmClient;
 import com.wegongdu.rillway.audit.sink.AuditSink;
 import com.wegongdu.rillway.audit.sink.InMemoryAuditSink;
 import com.wegongdu.rillway.audit.sink.NoOpAuditSink;
@@ -15,6 +18,7 @@ import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryReposi
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcTaskRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.RillwayDatabaseInitializer;
+import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.core.identity.IdentityService;
 import com.wegongdu.rillway.core.node.Node;
 import com.wegongdu.rillway.core.validation.ProcessValidator;
@@ -30,7 +34,6 @@ import com.wegongdu.rillway.runtime.executor.impl.HumanNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.RuleNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.StartNodeExecutor;
 import com.wegongdu.rillway.runtime.identity.DefaultIdentityService;
-import com.wegongdu.rillway.runtime.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.runtime.preview.ProcessPreviewer;
 import com.wegongdu.rillway.runtime.preview.StaticProcessPreviewer;
 import com.wegongdu.rillway.runtime.repository.BindingConfigRepository;
@@ -96,8 +99,14 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public HumanAssigneeResolver humanAssigneeResolver(IdentityService identityService) {
-        return new HumanAssigneeResolver(identityService);
+    public LlmClient llmClient() {
+        return new FakeLlmClient();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public HumanAssigneeResolver humanAssigneeResolver(LlmClient llmClient, IdentityService identityService) {
+        return new AiAssigneeResolver(llmClient, identityService);
     }
 
     @Bean

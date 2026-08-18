@@ -25,8 +25,8 @@ import com.wegongdu.rillway.runtime.executor.impl.EndNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.HumanNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.RuleNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.StartNodeExecutor;
+import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.runtime.identity.DefaultIdentityService;
-import com.wegongdu.rillway.runtime.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.runtime.repository.ExecutionHistoryRepository;
 import com.wegongdu.rillway.runtime.repository.ProcessInstanceRepository;
 import com.wegongdu.rillway.runtime.repository.TaskRepository;
@@ -62,7 +62,8 @@ public class StandardProcessEngine implements ProcessEngine {
             TaskRepository taskRepository,
             ExecutionHistoryRepository historyRepository
     ) {
-        this(executors, validator, auditSink, instanceRepository, taskRepository, historyRepository, new HumanAssigneeResolver(new DefaultIdentityService()));
+        this(executors, validator, auditSink, instanceRepository, taskRepository, historyRepository, (node, ctx) ->
+                HumanAssigneeResolver.ResolvedAssignee.of(node.assigneeUser(), node.assigneeRole(), node.candidateUsers(), node.candidateRoles()));
     }
 
     public StandardProcessEngine(
@@ -80,7 +81,8 @@ public class StandardProcessEngine implements ProcessEngine {
         this.instanceRepository = instanceRepository != null ? instanceRepository : new InMemoryProcessInstanceRepository();
         this.taskRepository = taskRepository != null ? taskRepository : new InMemoryTaskRepository();
         this.historyRepository = historyRepository != null ? historyRepository : new InMemoryExecutionHistoryRepository();
-        this.assigneeResolver = assigneeResolver != null ? assigneeResolver : new HumanAssigneeResolver(new DefaultIdentityService());
+        this.assigneeResolver = assigneeResolver != null ? assigneeResolver : (node, ctx) ->
+                HumanAssigneeResolver.ResolvedAssignee.of(node.assigneeUser(), node.assigneeRole(), node.candidateUsers(), node.candidateRoles());
     }
 
     public static Builder builder() {

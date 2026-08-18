@@ -88,12 +88,12 @@ class ZeroCodeBindingIntegrationTest {
         jdbcTemplate.update("INSERT INTO biz_purchase_order (id, title, amount, status) VALUES (?, ?, ?, ?)",
                 orderId, "高性能交换机采购", new BigDecimal("4500"), "DRAFT");
 
-        // Define workflow where human approval assignee is dynamically set to #{leader(initiator)}
+        // Define workflow where human approval assignee is configured in pure natural language!
         ProcessDefinition definition = ProcessDefinition.builder("dynamic-approval-workflow")
                 .startNode("start")
                 .humanNode("leader-approval", h -> h
                         .name("直属领导审批")
-                        .assigneeUser("#{leader(initiator)}")
+                        .assigneePrompt("让申请人的直属领导审批") // 纯自然语言描述，大模型自主调用 Tool 找到 Manager_Bob
                 )
                 .endNode("end")
                 .edge("start", "leader-approval")

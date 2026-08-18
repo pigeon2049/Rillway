@@ -295,19 +295,22 @@ public class SystemIdentityAdapter implements IdentityService {
 }
 ```
 
-### 3. 提示词与流程中的动态人员表达式
-在流程节点配置或自然语言生成中，可直接使用以下动态表达式：
-* `#{leader(initiator)}`：自动查找发起人的直属领导；
-* `#{deptManager('FINANCE')}`：自动查找财务部门的主管；
-* `#{post('CASHIER')}`：自动查找所有出纳岗位员工并生成待办候选人；
-* `#{role('HR_DIRECTOR')}`：自动查找人事总监角色人员。
+### 3. 大模型驱动的纯自然语言人员指派 (LLM + Tool Calling)
+
+**告别死板复杂的伪表达式语法！** 在流程节点配置或自然语言生成中，直接填写人类大白话提示词：
 
 ```java
+// 流程节点中直接写人类自然语言，大模型结合人事工具集自主推理！
 .humanNode("leader-approval", h -> h
     .name("直属领导审批")
-    .assigneeUser("#{leader(initiator)}") // 动态解析当前发起人的领导
+    .assigneePrompt("让申请人的直属领导审批") // 纯自然语言：大模型自主 Tool Calling 查询组织架构！
 )
 ```
+
+#### 大模型执行流程：
+1. **理解上下文意图**：大模型接收提示词 `"让申请人的直属领导审批"` 与表单上下文 `{ initiator: "Alice", dept: "IT" }`；
+2. **自主 Tool Calling**：大模型决定调用工具 `getDirectLeader("Alice")`；
+3. **返回真实人员**：组织架构接口返回 `"Manager_Bob"`，大模型精准完成人员指派并生成待办 Task！
 
 ---
 
