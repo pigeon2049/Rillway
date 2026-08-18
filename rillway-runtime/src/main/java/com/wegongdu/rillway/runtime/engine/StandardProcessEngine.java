@@ -25,6 +25,8 @@ import com.wegongdu.rillway.runtime.executor.impl.EndNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.HumanNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.RuleNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.StartNodeExecutor;
+import com.wegongdu.rillway.runtime.identity.DefaultIdentityService;
+import com.wegongdu.rillway.runtime.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.runtime.repository.ExecutionHistoryRepository;
 import com.wegongdu.rillway.runtime.repository.ProcessInstanceRepository;
 import com.wegongdu.rillway.runtime.repository.TaskRepository;
@@ -49,6 +51,7 @@ public class StandardProcessEngine implements ProcessEngine {
     private final ProcessInstanceRepository instanceRepository;
     private final TaskRepository taskRepository;
     private final ExecutionHistoryRepository historyRepository;
+    private final HumanAssigneeResolver assigneeResolver;
     private final Map<String, ProcessDefinition> definitionCache = new ConcurrentHashMap<>();
 
     public StandardProcessEngine(
@@ -59,12 +62,25 @@ public class StandardProcessEngine implements ProcessEngine {
             TaskRepository taskRepository,
             ExecutionHistoryRepository historyRepository
     ) {
+        this(executors, validator, auditSink, instanceRepository, taskRepository, historyRepository, new HumanAssigneeResolver(new DefaultIdentityService()));
+    }
+
+    public StandardProcessEngine(
+            List<NodeExecutor<? extends Node>> executors,
+            ProcessValidator validator,
+            AuditSink auditSink,
+            ProcessInstanceRepository instanceRepository,
+            TaskRepository taskRepository,
+            ExecutionHistoryRepository historyRepository,
+            HumanAssigneeResolver assigneeResolver
+    ) {
         this.executors = executors != null ? List.copyOf(executors) : List.of();
         this.validator = validator != null ? validator : new StandardProcessValidator();
         this.auditSink = auditSink != null ? auditSink : NoOpAuditSink.INSTANCE;
         this.instanceRepository = instanceRepository != null ? instanceRepository : new InMemoryProcessInstanceRepository();
         this.taskRepository = taskRepository != null ? taskRepository : new InMemoryTaskRepository();
         this.historyRepository = historyRepository != null ? historyRepository : new InMemoryExecutionHistoryRepository();
+        this.assigneeResolver = assigneeResolver != null ? assigneeResolver : new HumanAssigneeResolver(new DefaultIdentityService());
     }
 
     public static Builder builder() {
@@ -195,16 +211,17 @@ public class StandardProcessEngine implements ProcessEngine {
                             .filter(t -> t.nodeId().equals(hn.id()) && t.status() == com.wegongdu.rillway.core.model.TaskStatus.PENDING)
                             .toList();
                     if (existingPending.isEmpty()) {
+                        HumanAssigneeResolver.ResolvedAssignee resolved = assigneeResolver.resolve(hn, currentInstance.context());
                         Task task = Task.createPending(
                                 currentInstance.id(),
                                 currentInstance.businessKey(),
                                 definition.id(),
                                 hn.id(),
                                 hn.name(),
-                                hn.assigneeUser(),
-                                hn.assigneeRole(),
-                                hn.candidateUsers(),
-                                hn.candidateRoles()
+                                resolved.assigneeUser(),
+                                resolved.assigneeRole(),
+                                resolved.candidateUsers(),
+                                resolved.candidateRoles()
                         );
                         taskRepository.save(task);
                     }
@@ -296,6 +313,7 @@ public class StandardProcessEngine implements ProcessEngine {
         private ProcessInstanceRepository instanceRepository;
         private TaskRepository taskRepository;
         private ExecutionHistoryRepository historyRepository;
+        private HumanAssigneeResolver assigneeResolver;
 
         public Builder addExecutor(NodeExecutor<? extends Node> executor) {
             if (executor != null) {
@@ -336,6 +354,11 @@ public class StandardProcessEngine implements ProcessEngine {
             return this;
         }
 
+        public Builder assigneeResolver(HumanAssigneeResolver assigneeResolver) {
+            this.assigneeResolver = assigneeResolver;
+            return this;
+        }
+
         public StandardProcessEngine build() {
             if (this.executors.isEmpty()) {
                 this.executors.add(new StartNodeExecutor());
@@ -349,7 +372,8 @@ public class StandardProcessEngine implements ProcessEngine {
                     auditSink,
                     instanceRepository,
                     taskRepository,
-                    historyRepository
+                    historyRepository,
+                    assigneeResolver
             );
         }
     }

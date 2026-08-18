@@ -9,10 +9,13 @@ import com.wegongdu.rillway.ai.intent.IntentInterpreter;
 import com.wegongdu.rillway.audit.sink.AuditSink;
 import com.wegongdu.rillway.audit.sink.InMemoryAuditSink;
 import com.wegongdu.rillway.audit.sink.NoOpAuditSink;
+import com.wegongdu.rillway.autoconfigure.binding.EntityStatusAutoUpdater;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcBindingConfigRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcTaskRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.RillwayDatabaseInitializer;
+import com.wegongdu.rillway.core.identity.IdentityService;
 import com.wegongdu.rillway.core.node.Node;
 import com.wegongdu.rillway.core.validation.ProcessValidator;
 import com.wegongdu.rillway.core.validation.StandardProcessValidator;
@@ -26,16 +29,21 @@ import com.wegongdu.rillway.runtime.executor.impl.EndNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.HumanNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.RuleNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.StartNodeExecutor;
+import com.wegongdu.rillway.runtime.identity.DefaultIdentityService;
+import com.wegongdu.rillway.runtime.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.runtime.preview.ProcessPreviewer;
 import com.wegongdu.rillway.runtime.preview.StaticProcessPreviewer;
+import com.wegongdu.rillway.runtime.repository.BindingConfigRepository;
 import com.wegongdu.rillway.runtime.repository.ExecutionHistoryRepository;
 import com.wegongdu.rillway.runtime.repository.ProcessInstanceRepository;
 import com.wegongdu.rillway.runtime.repository.TaskRepository;
+import com.wegongdu.rillway.runtime.repository.memory.InMemoryBindingConfigRepository;
 import com.wegongdu.rillway.runtime.repository.memory.InMemoryExecutionHistoryRepository;
 import com.wegongdu.rillway.runtime.repository.memory.InMemoryProcessInstanceRepository;
 import com.wegongdu.rillway.runtime.repository.memory.InMemoryTaskRepository;
 import com.wegongdu.rillway.runtime.task.StandardTaskService;
 import com.wegongdu.rillway.runtime.task.TaskService;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -82,11 +90,14 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditSink auditSink(RillwayProperties properties) {
-        if (!properties.getAudit().isEnabled() || "no-op".equalsIgnoreCase(properties.getAudit().getSink())) {
-            return NoOpAuditSink.INSTANCE;
-        }
-        return new InMemoryAuditSink();
+    public IdentityService identityService() {
+        return new DefaultIdentityService();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public HumanAssigneeResolver humanAssigneeResolver(IdentityService identityService) {
+        return new HumanAssigneeResolver(identityService);
     }
 
     @Bean
@@ -131,17 +142,6 @@ public class RillwayAutoConfiguration {
         return new RuleNodeExecutor();
     }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public AgentNodeExecutor agentNodeExecutor(
-            AgentRegistry agentRegistry,
-            PolicyProvider policyProvider,
-            AgentAuthorityGuard authorityGuard,
-            AuditSink auditSink
-    ) {
-        return new AgentNodeExecutor(agentRegistry, policyProvider, authorityGuard, auditSink);
-    }
-
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass({JdbcTemplate.class, DataSource.class})
     @ConditionalOnBean(DataSource.class)
@@ -183,6 +183,15 @@ public class RillwayAutoConfiguration {
         ) {
             return new JdbcTaskRepository(new JdbcTemplate(dataSource), objectMapper);
         }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public BindingConfigRepository bindingConfigRepository(
+                DataSource dataSource,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcBindingConfigRepository(new JdbcTemplate(dataSource));
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -205,6 +214,50 @@ public class RillwayAutoConfiguration {
         public TaskRepository taskRepository() {
             return new InMemoryTaskRepository();
         }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public BindingConfigRepository bindingConfigRepository() {
+            return new InMemoryBindingConfigRepository();
+        }
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditSink auditSink(
+            ObjectProvider<DataSource> dataSourceProvider,
+            ObjectProvider<BindingConfigRepository> bindingConfigProvider,
+            ObjectProvider<ProcessInstanceRepository> instanceRepoProvider,
+            RillwayProperties properties
+    ) {
+        AuditSink rawSink = (properties.getAudit().isEnabled() && !"no-op".equalsIgnoreCase(properties.getAudit().getSink()))
+                ? new InMemoryAuditSink()
+                : NoOpAuditSink.INSTANCE;
+
+        DataSource dataSource = dataSourceProvider.getIfAvailable();
+        BindingConfigRepository bindingConfigRepository = bindingConfigProvider.getIfAvailable();
+        ProcessInstanceRepository instanceRepository = instanceRepoProvider.getIfAvailable();
+
+        if (dataSource != null && bindingConfigRepository != null && instanceRepository != null) {
+            return new EntityStatusAutoUpdater(
+                    new JdbcTemplate(dataSource),
+                    bindingConfigRepository,
+                    instanceRepository,
+                    rawSink
+            );
+        }
+        return rawSink;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AgentNodeExecutor agentNodeExecutor(
+            AgentRegistry agentRegistry,
+            PolicyProvider policyProvider,
+            AgentAuthorityGuard authorityGuard,
+            AuditSink auditSink
+    ) {
+        return new AgentNodeExecutor(agentRegistry, policyProvider, authorityGuard, auditSink);
     }
 
     @Bean
@@ -225,7 +278,8 @@ public class RillwayAutoConfiguration {
             AuditSink auditSink,
             ProcessInstanceRepository instanceRepository,
             TaskRepository taskRepository,
-            ExecutionHistoryRepository historyRepository
+            ExecutionHistoryRepository historyRepository,
+            HumanAssigneeResolver assigneeResolver
     ) {
         return new StandardProcessEngine(
                 executors,
@@ -233,7 +287,8 @@ public class RillwayAutoConfiguration {
                 auditSink,
                 instanceRepository,
                 taskRepository,
-                historyRepository
+                historyRepository,
+                assigneeResolver
         );
     }
 }

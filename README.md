@@ -218,6 +218,99 @@ taskService.completeTask(
 
 ---
 
+## 🏢 零代码单据接入与状态自动回写 (Zero-Code Binding)
+
+在传统 BPMN 引擎中，每个单据接入审批都要写 Listener 或 Service 手动更新单据状态。Rillway 提供**配置表驱动的零代码自动回写**：
+
+### 1. 预置单据配置表 (`rillway_binding_config`)
+应用启动时自动建表，支持在数据库或管理后台配置业务单据与审批状态的映射：
+
+| 字段 | 含义 | 示例值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `business_type` | 业务单据类型 | `purchase_order` | 单据唯一标识 |
+| `process_definition_id` | 绑定的流程ID | `purchase-approval-workflow` | 绑定的流程定义 |
+| `table_name` | 业务物理表名 | `biz_purchase_order` | 业务单据主表 |
+| `primary_key_column` | 主键列名 | `id` | 默认 `id` |
+| `status_column` | 状态字段列名 | `status` | 待更新的状态字段 |
+| `approved_value` | 审批通过回写值 | `APPROVED` 或 `2` | 流程通过时自动回写 |
+| `rejected_value` | 审批驳回回写值 | `REJECTED` 或 `3` | 流程驳回时自动回写 |
+
+### 2. 零代码自动回写效果
+业务提交单据并发起流程：
+```java
+// 绑定单据格式：business_type:entity_id
+processEngine.start(definition, "purchase_order:PO_20260818001", context);
+```
+当流程节点审批通过（或被驳回）时，Rillway 自动执行：
+```sql
+UPDATE biz_purchase_order 
+SET status = 'APPROVED' 
+WHERE id = 'PO_20260818001';
+```
+**业务开发者无需编写任何监听器或 Mapper 更新代码，单据状态完全自动化流转！**
+
+---
+
+## 👥 极简组织架构与人员查询 SPI (`IdentityService`)
+
+为了让流程和自然语言意图无缝支持“张三的直属领导”、“财务部主管”、“具有出纳岗位的员工”，Rillway 提供极简 SPI：
+
+### 1. SPI 接口定义
+```java
+package com.wegongdu.rillway.core.identity;
+
+public interface IdentityService {
+    /** 查询用户的直属上级 */
+    Optional<String> getDirectLeader(String userId);
+
+    /** 查询部门负责人/经理 */
+    Optional<String> getDepartmentManager(String departmentId);
+
+    /** 查询指定岗位下的所有人员 (如出纳岗 CASHIER) */
+    List<String> getUsersByPost(String postCode);
+
+    /** 查询指定角色下的所有人员 (如财务专员 FINANCE_OFFICER) */
+    List<String> getUsersByRole(String roleCode);
+
+    /** 查询指定部门下的所有人员 */
+    List<String> getUsersByDepartment(String departmentId);
+}
+```
+
+### 2. 在业务项目 (`gongdu-base` / `ruoyi-vue-pro`) 中极简适配
+只需写一个适配类，对接业务现有的 `sys_user` / `sys_dept` / `sys_post` 表：
+```java
+@Component
+public class SystemIdentityAdapter implements IdentityService {
+    @Autowired
+    private SysUserService userService;
+    @Autowired
+    private SysDeptService deptService;
+
+    @Override
+    public Optional<String> getDirectLeader(String userId) {
+        return Optional.ofNullable(userService.getLeaderUserId(userId));
+    }
+    // ... 对接其他查询
+}
+```
+
+### 3. 提示词与流程中的动态人员表达式
+在流程节点配置或自然语言生成中，可直接使用以下动态表达式：
+* `#{leader(initiator)}`：自动查找发起人的直属领导；
+* `#{deptManager('FINANCE')}`：自动查找财务部门的主管；
+* `#{post('CASHIER')}`：自动查找所有出纳岗位员工并生成待办候选人；
+* `#{role('HR_DIRECTOR')}`：自动查找人事总监角色人员。
+
+```java
+.humanNode("leader-approval", h -> h
+    .name("直属领导审批")
+    .assigneeUser("#{leader(initiator)}") // 动态解析当前发起人的领导
+)
+```
+
+---
+
 ## 🗄️ 极致无感持久化 (Zero-Config Persistence)
 
 Rillway 专为企业中台（如 `gongdu-base`、`ruoyi-vue-pro`）设计了自适应无感持久化：

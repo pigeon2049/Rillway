@@ -57,7 +57,7 @@ public class PurchaseReviewAgent implements Agent {
         }
 
         // 3. Reject prohibited items
-        if ("GAMING".equalsIgnoreCase(category) || "LUXURY".equalsIgnoreCase(category)) {
+        if (category != null && (category.toUpperCase().contains("LUXURY") || category.toUpperCase().contains("GAMING") || category.toUpperCase().contains("GIFT"))) {
             AgentDecisionExplanation explanation = AgentDecisionExplanation.builder()
                     .reasoningSummary("Purchase category [" + category + "] is listed on company prohibited procurement items")
                     .policyReferences("PURCHASE_POLICY_2026#Article8.1")

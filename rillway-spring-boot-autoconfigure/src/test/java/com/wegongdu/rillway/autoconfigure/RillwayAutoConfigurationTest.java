@@ -3,9 +3,12 @@ package com.wegongdu.rillway.autoconfigure;
 import com.wegongdu.rillway.agent.spi.AgentRegistry;
 import com.wegongdu.rillway.ai.intent.IntentInterpreter;
 import com.wegongdu.rillway.audit.sink.AuditSink;
+import com.wegongdu.rillway.core.identity.IdentityService;
 import com.wegongdu.rillway.policy.spi.PolicyProvider;
 import com.wegongdu.rillway.runtime.engine.ProcessEngine;
+import com.wegongdu.rillway.runtime.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.runtime.preview.ProcessPreviewer;
+import com.wegongdu.rillway.runtime.repository.BindingConfigRepository;
 import com.wegongdu.rillway.runtime.repository.ProcessInstanceRepository;
 import com.wegongdu.rillway.runtime.repository.TaskRepository;
 import com.wegongdu.rillway.runtime.task.TaskService;
@@ -33,6 +36,9 @@ class RillwayAutoConfigurationTest {
             assertThat(context).hasSingleBean(IntentInterpreter.class);
             assertThat(context).hasSingleBean(ProcessInstanceRepository.class);
             assertThat(context).hasSingleBean(TaskRepository.class);
+            assertThat(context).hasSingleBean(BindingConfigRepository.class);
+            assertThat(context).hasSingleBean(IdentityService.class);
+            assertThat(context).hasSingleBean(HumanAssigneeResolver.class);
             assertThat(context).hasSingleBean(TaskService.class);
         });
     }
