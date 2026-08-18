@@ -44,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * HRM 考勤请假与企业组织架构多级审批全场景集成测试
  */
-@SpringBootTest(classes = PurchaseApplication.class)
+@SpringBootTest(classes = RillwayExampleApplication.class)
 public class HrmLeaveWorkflowIntegrationTest {
 
     private static final Logger log = LoggerFactory.getLogger(HrmLeaveWorkflowIntegrationTest.class);

@@ -30,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(classes = PurchaseApplication.class)
+@SpringBootTest(classes = RillwayExampleApplication.class)
 @Import(EventListenerIntegrationTest.TestListenerConfiguration.class)
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:rillway_event_listener_test;DB_CLOSE_DELAY=-1;MODE=MySQL",

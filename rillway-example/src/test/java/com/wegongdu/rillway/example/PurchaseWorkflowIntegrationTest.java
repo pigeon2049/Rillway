@@ -22,7 +22,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(classes = PurchaseApplication.class)
+@SpringBootTest(classes = RillwayExampleApplication.class)
 class PurchaseWorkflowIntegrationTest {
 
     @Autowired

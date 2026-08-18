@@ -24,7 +24,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(classes = PurchaseApplication.class)
+@SpringBootTest(classes = RillwayExampleApplication.class)
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:rillway_snapshot_cache_test;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.datasource.driver-class-name=org.h2.Driver",

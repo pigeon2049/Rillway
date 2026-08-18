@@ -62,9 +62,10 @@ public final class ProcessContext implements Serializable {
         return initiator;
     }
 
-    /**
-     * Returns the initiator parsed as a Long ID (e.g. Snowflake / database sequence ID).
-     */
+    public String getInitiator() {
+        return initiator;
+    }
+
     public Long initiatorLong() {
         if (initiator == null || initiator.isBlank()) return null;
         try {
@@ -74,9 +75,6 @@ public final class ProcessContext implements Serializable {
         }
     }
 
-    /**
-     * Returns the initiator converted to the requested type.
-     */
     @SuppressWarnings("unchecked")
     public <T> T initiator(Class<T> type) {
         if (initiator == null) return null;
@@ -97,6 +95,10 @@ public final class ProcessContext implements Serializable {
     }
 
     public Map<String, Object> variables() {
+        return variables;
+    }
+
+    public Map<String, Object> getVariables() {
         return variables;
     }
 
