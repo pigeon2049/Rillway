@@ -191,7 +191,62 @@ rillway:
 
 ---
 
-### 4. Enterprise Edge Cases & Operations
+### 4. Zero-Code Entity Status Auto-Update (EntityStatusAutoUpdater)
+
+Eliminate boilerplate MyBatis / JPA Update statements. Upon task approvals or rejections, Rillway automatically triggers `EntityStatusAutoUpdater` to update the bound table:
+
+```sql
+-- Automatically executed by Rillway upon approval:
+UPDATE biz_purchase_order 
+SET status = 'APPROVED' 
+WHERE id = 'PO_20260818_001';
+```
+
+- **Local Transaction Atomicity (Zero-Distributed-Tx)**:
+  Shares the same Spring `@Transactional` local database connection. Domain record insertion, workflow state transition, and status column updates are committed or rolled back atomically within the **same local transaction** without external distributed transaction coordinators (e.g. Seata).
+- **Graceful Fallback**: Automatically degrades to in-memory simulation in non-database environments (e.g. unit tests).
+
+---
+
+### 5. Domain Event Listener System (Spring Event Bridge)
+
+Rillway natively bridges workflow lifecycle events directly into Spring's standard `@EventListener` ecosystem, allowing seamless, decoupled integration with downstream systems (DingTalk/Slack notifications, email alerts, ERP purchase order creation):
+
+```java
+@Component
+public class PurchaseWorkflowEventListener {
+
+    // 1. Listen for process initiation
+    @EventListener
+    public void onProcessStarted(ProcessEvent.ProcessStartedEvent event) {
+        log.info("Workflow started: instanceId={}, businessKey={}, initiator={}", 
+                event.processInstanceId(), event.businessKey(), event.initiator());
+    }
+
+    // 2. Listen for node decision completion
+    @EventListener
+    public void onNodeCompleted(ProcessEvent.NodeCompletedEvent event) {
+        log.info("Node [{}] completed: actor={}, decision={}, reason={}", 
+                event.nodeName(), event.actor(), event.decision().type(), event.decision().reason());
+    }
+
+    // 3. Listen for final process completion / archiving (trigger ERP receipts)
+    @EventListener
+    public void onProcessCompleted(ProcessEvent.ProcessCompletedEvent event) {
+        if (event.isSuccess()) {
+            log.info("🎉 Order [{}] approved! Triggering ERP receipt creation...", event.businessKey());
+            erpService.createPurchaseReceipt(event.businessKey());
+        } else {
+            log.warn("❌ Order [{}] rejected. Notifying applicant...", event.businessKey());
+            notifyService.sendRejectNotice(event.businessKey());
+        }
+    }
+}
+```
+
+---
+
+### 6. Enterprise Edge Cases & Operations
 
 - **Terminal Node Detection**:
   ```java

@@ -190,7 +190,62 @@ rillway:
 
 ---
 
-### 4. 企业级边界与运维处理
+### 4. 业务表状态字段自动回写机制 (Entity Status Auto-Update)
+
+无需手写任何 MyBatis / JPA Update 代码，在流程流转、审批通过或驳回时，Rillway 自动触发 `EntityStatusAutoUpdater` 执行精准的 SQL 回写：
+
+```sql
+-- 流程审批通过时，底层自动执行：
+UPDATE biz_purchase_order 
+SET status = 'APPROVED' 
+WHERE id = 'PO_20260818_001';
+```
+
+- **事务同生共死 (Atomic & Zero-Distributed-Tx)**：
+  底层基于同一个 Spring `@Transactional` 本地事务与数据库连接，业务单据插入、流程实例流转与状态字段回写在**同一本地事务中提交或回滚**，彻底告别分布式事务框架（如 Seata）的运维与性能负担！
+- **自适应降级**：无数据库环境自动转为内存模拟，本地单测开箱即跑。
+
+---
+
+### 5. 领域事件监听机制 (Domain Event System)
+
+Rillway 提供了双模事件发布机制，深度融合 Spring 官方 `@EventListener` 生态。业务系统可零侵入监听流程各阶段生命周期，实现下游联动（如发钉钉/企业微信、邮件通知、ERP 自动开单）：
+
+```java
+@Component
+public class PurchaseWorkflowEventListener {
+
+    // 1. 监听流程发起事件
+    @EventListener
+    public void onProcessStarted(ProcessEvent.ProcessStartedEvent event) {
+        log.info("流程已启动: 实例ID={}, 单据Key={}, 发起人={}", 
+                event.processInstanceId(), event.businessKey(), event.initiator());
+    }
+
+    // 2. 监听审批节点完成事件（记录决策）
+    @EventListener
+    public void onNodeCompleted(ProcessEvent.NodeCompletedEvent event) {
+        log.info("节点 [{}] 审批完成: 处理人={}, 决策={}, 意见={}", 
+                event.nodeName(), event.actor(), event.decision().type(), event.decision().reason());
+    }
+
+    // 3. 监听流程终审归档事件（触发下游 ERP / 发邮件）
+    @EventListener
+    public void onProcessCompleted(ProcessEvent.ProcessCompletedEvent event) {
+        if (event.isSuccess()) {
+            log.info("🎉 采购单 [{}] 终审通过，自动调用 ERP 创建采购入库单！", event.businessKey());
+            erpService.createPurchaseReceipt(event.businessKey());
+        } else {
+            log.warn("❌ 采购单 [{}] 已被驳回，通知申请人修正！", event.businessKey());
+            notifyService.sendRejectNotice(event.businessKey());
+        }
+    }
+}
+```
+
+---
+
+### 6. 企业级边界与运维处理
 
 - **终审节点感知**：
   ```java
