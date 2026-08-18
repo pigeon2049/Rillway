@@ -293,6 +293,7 @@ public class RillwayAutoConfiguration {
     }
 
     @Configuration(proxyBeanMethods = false)
+    @ConditionalOnMissingBean(DataSource.class)
     static class FallbackPersistenceConfiguration {
 
         @Bean
