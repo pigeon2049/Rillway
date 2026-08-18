@@ -139,9 +139,9 @@ public class StandardProcessEngine implements ProcessEngine {
             throw new IllegalStateException("BindingConfigRepository is not configured in ProcessEngine");
         }
 
-        var configOpt = bindingConfigRepository.findByBusinessType(businessType);
+        var configOpt = bindingConfigRepository.findMatching(businessType);
         if (configOpt.isEmpty()) {
-            throw new IllegalArgumentException("No enabled BindingConfig found for businessType: " + businessType);
+            throw new IllegalArgumentException("No enabled BindingConfig found for businessType or tableName: " + businessType);
         }
 
         var config = configOpt.get();

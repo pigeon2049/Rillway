@@ -29,8 +29,71 @@ public final class ProcessContext implements Serializable {
         return new Builder().build();
     }
 
+    /**
+     * Converts an arbitrary JavaBean / Record / Map into a ProcessContext,
+     * automatically discovering initiator and all form variables.
+     */
+    public static ProcessContext from(Object bean) {
+        return com.wegongdu.rillway.core.util.EntityBeanResolver.resolveContext(bean);
+    }
+
+    /**
+     * Converts an arbitrary JavaBean / Record / Map into a ProcessContext with explicit initiator.
+     */
+    public static ProcessContext from(String initiator, Object bean) {
+        return com.wegongdu.rillway.core.util.EntityBeanResolver.resolveContext(initiator, bean);
+    }
+
+    /**
+     * Alias for from(bean).
+     */
+    public static ProcessContext of(Object bean) {
+        return from(bean);
+    }
+
+    /**
+     * Alias for from(initiator, bean).
+     */
+    public static ProcessContext of(String initiator, Object bean) {
+        return from(initiator, bean);
+    }
+
     public String initiator() {
         return initiator;
+    }
+
+    /**
+     * Returns the initiator parsed as a Long ID (e.g. Snowflake / database sequence ID).
+     */
+    public Long initiatorLong() {
+        if (initiator == null || initiator.isBlank()) return null;
+        try {
+            return Long.parseLong(initiator.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Returns the initiator converted to the requested type.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T initiator(Class<T> type) {
+        if (initiator == null) return null;
+        if (type.isInstance(initiator)) {
+            return (T) initiator;
+        }
+        if (type == Long.class || type == long.class) {
+            return (T) initiatorLong();
+        }
+        if (type == Integer.class || type == int.class) {
+            try {
+                return (T) Integer.valueOf(initiator.trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
     }
 
     public Map<String, Object> variables() {

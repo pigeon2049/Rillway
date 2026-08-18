@@ -126,6 +126,24 @@ public class RillwayDatabaseInitializer implements InitializingBean {
                 )
             """);
         }
+
+        if (!tableExists("rillway_ai_config")) {
+            log.info("Rillway table [rillway_ai_config] not found. Creating table automatically...");
+            jdbcTemplate.execute("""
+                CREATE TABLE rillway_ai_config (
+                    id VARCHAR(64) PRIMARY KEY,
+                    provider_name VARCHAR(64) NOT NULL,
+                    base_url VARCHAR(256) NOT NULL,
+                    api_key VARCHAR(256) NOT NULL,
+                    model_name VARCHAR(64) NOT NULL,
+                    temperature DOUBLE PRECISION DEFAULT 0.1,
+                    timeout_seconds INT DEFAULT 30,
+                    is_default BOOLEAN DEFAULT TRUE,
+                    enabled BOOLEAN DEFAULT TRUE,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """);
+        }
     }
 
     private boolean tableExists(String tableName) {

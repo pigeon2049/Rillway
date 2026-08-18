@@ -126,7 +126,6 @@ public enum AgentAuthority {
 
 ### 1. 引入 Maven Starter
 
-```xml
 <dependency>
     <groupId>com.wegongdu.rillway</groupId>
     <artifactId>rillway-spring-boot-starter</artifactId>
@@ -136,7 +135,46 @@ public enum AgentAuthority {
 
 ---
 
-### 2. 方式一（首选推荐）：零代码配置表 + 自然语言意图驱动
+### 2. 配置大模型（原生 HTTP 零依赖 / 配置文件 & 数据库双轨）
+
+Rillway 内置了轻量级原生 HTTP 客户端，**零第三方 AI 框架重型依赖**（底层纯 Java 原生 `HttpClient`），天然兼容所有标准 OpenAI 协议大模型（**DeepSeek、通义千问 Qwen、Kimi、GLM、Ollama、OpenAI** 等）：
+
+#### 方式 A：在 `application.yml` 中配置
+```yaml
+rillway:
+  enabled: true
+  ai:
+    openai:
+      enabled: true
+      base-url: https://api.deepseek.com/v1     # 支持 DeepSeek / DashScope / 本地 Ollama 等
+      api-key: ${DEEPSEEK_API_KEY:sk-xxxxxxxx}  # 模型 API Key
+      model: deepseek-v4-flash                     # 模型名称
+      temperature: 0.1
+      timeout-seconds: 30
+```
+
+#### 方式 B：在数据库配置表 (`rillway_ai_config`) 中配置（支持后台动态热切）
+应用启动时自动初始化 `rillway_ai_config` 表，支持在管理后台或 SQL 中维护模型连接，**无需重启应用**：
+```sql
+INSERT INTO rillway_ai_config (
+    id, provider_name, base_url, api_key, model_name, temperature, timeout_seconds, is_default, enabled, updated_at
+) VALUES (
+    'cfg_deepseek_01',
+    'deepseek',
+    'https://api.deepseek.com/v1',
+    'sk-xxxxxxxx',
+    'deepseek-v4-flash',
+    0.1,
+    30,
+    true,
+    true,
+    CURRENT_TIMESTAMP
+);
+```
+
+---
+
+### 3. 方式一（首选推荐）：零代码配置表 + 自然语言意图驱动
 
 > 💡 **核心优势**：流程变动（如修改审批阈值、调整审核角色）**无需修改任何 Java 代码，无需发版重启**，仅需在数据库或管理后台更新一段 Prompt！
 
@@ -168,28 +206,33 @@ INSERT INTO rillway_binding_config (
 );
 ```
 
-#### Step 2: 业务系统一行代码发起审批
+#### Step 2: 业务系统直接传 Bean 发起审批（1 行代码！）
 
-业务代码**无需声明任何 ProcessDefinition**，直接按 `businessType` 提交，引擎自动通过 AI 意图解析器驱动流转：
+业务代码**无需声明任何 ProcessDefinition，无需手动拆解字段**，直接将单据实体（MyBatis-Plus Entity / JPA 实体 / 普通 POJO / Record）丢给引擎，底层全自动匹配配置表、解析单据 ID、发起人与表单变量：
 
 ```java
-@Autowired
-private ProcessEngine processEngine;
+// 1. 业务单据实体（支持 MyBatis-Plus @TableName / JPA @Table / @RillwayEntity）
+@TableName("biz_purchase_order")                  // 物理表名：匹配 rillway_binding_config.table_name
+@RillwayEntity(businessType = "purchase_order")   // 单据类型：匹配 rillway_binding_config.business_type
+public class PurchaseOrder {
 
-// 1. 组装业务表单数据
-ProcessContext context = ProcessContext.builder()
-    .initiator("Alice")
-    .variable("item", "高性能研发服务器")
-    .variable("amount", new BigDecimal("12000"))
-    .variable("hasInvoice", true)
-    .build();
+    @TableId
+    @EntityId
+    private Long id;              // 🌟 单据主键 ID (如 18247291823791283L)
 
-// 2. 一行代码按单据类型发起审批流！
-ProcessInstance instance = processEngine.startByBusinessType(
-    "purchase_order",   // 对应配置表 business_type
-    "PO_20260818001",   // 业务单据唯一主键 ID
-    context
-);
+    @ProcessInitiator
+    private Long creatorUserId;   // 🌟 发起人用户 ID (如 1001L，彻底防重名)
+
+    private BigDecimal amount;    // 12000
+    private String item;          // "高性能研发服务器"
+    private Boolean hasInvoice;   // true
+
+    @ProcessIgnore
+    private String password;      // 🛡️ 敏感字段：自动跳过，绝不进入流程上下文与大模型
+}
+
+// 🚀 2. 终极极简：直接扔 Bean！一行代码全自动发起审批流
+ProcessInstance instance = processEngine.start(order);
 ```
 
 #### Step 3: 人工待办审批与全自动状态回写
@@ -198,21 +241,21 @@ ProcessInstance instance = processEngine.startByBusinessType(
 @Autowired
 private TaskService taskService;
 
-// 查询当前经理待办
+// 1. 查询当前经理待办（传入当前用户 ID / 角色）
 List<Task> pendingTasks = taskService.findPendingTasks(currentUserId, currentUserRoles);
 
-// 用户审批通过
+// 2. 用户审批通过
 taskService.completeTask(
     taskId,
     ApproveDecision.of(Actor.HumanActor.of(currentUserId, "DEPARTMENT_MANAGER"), "核验无误，同意采购")
 );
 
-// 🎉 审批完成后，Rillway 自动将 biz_purchase_order 对应行的 status 回写为 'APPROVED'！
+// 🎉 3. 审批完成后，Rillway 自动将物理表 biz_purchase_order 对应行 status 回写为 'APPROVED'！
 ```
 
 ---
 
-### 3. 方式二（进阶极客）：Java Fluent DSL 编程式定义
+### 4. 方式二（进阶极客）：Java Fluent DSL 编程式定义
 
 适合用于确定性本地单元测试，或对微秒级静态拓扑有强约束的场景：
 

@@ -23,6 +23,11 @@ public class RillwayProperties {
      */
     private Engine engine = new Engine();
 
+    /**
+     * AI & LLM configuration.
+     */
+    private Ai ai = new Ai();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -45,6 +50,14 @@ public class RillwayProperties {
 
     public void setEngine(Engine engine) {
         this.engine = engine;
+    }
+
+    public Ai getAi() {
+        return ai;
+    }
+
+    public void setAi(Ai ai) {
+        this.ai = ai;
     }
 
     public static class Audit {
@@ -77,6 +90,75 @@ public class RillwayProperties {
 
         public void setStrictAuthorityCheck(boolean strictAuthorityCheck) {
             this.strictAuthorityCheck = strictAuthorityCheck;
+        }
+    }
+
+    public static class Ai {
+        private OpenAi openai = new OpenAi();
+
+        public OpenAi getOpenai() {
+            return openai;
+        }
+
+        public void setOpenai(OpenAi openai) {
+            this.openai = openai;
+        }
+    }
+
+    public static class OpenAi {
+        private boolean enabled = false;
+        private String baseUrl = "https://api.openai.com/v1";
+        private String apiKey;
+        private String model = "gpt-4o-mini";
+        private Double temperature = 0.1;
+        private Integer timeoutSeconds = 30;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public Double getTemperature() {
+            return temperature;
+        }
+
+        public void setTemperature(Double temperature) {
+            this.temperature = temperature;
+        }
+
+        public Integer getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(Integer timeoutSeconds) {
+            this.timeoutSeconds = timeoutSeconds;
         }
     }
 }

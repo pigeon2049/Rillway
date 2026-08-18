@@ -44,6 +44,42 @@ class RillwayAutoConfigurationTest {
             assertThat(context).hasSingleBean(com.wegongdu.rillway.ai.cache.ResolutionCacheManager.class);
             assertThat(context).hasSingleBean(HumanAssigneeResolver.class);
             assertThat(context).hasSingleBean(TaskService.class);
+            assertThat(context).hasSingleBean(com.wegongdu.rillway.ai.config.AiModelConfigRepository.class);
+            assertThat(context.getBean(LlmClient.class)).isInstanceOf(com.wegongdu.rillway.ai.llm.FakeLlmClient.class);
+        });
+    }
+
+    @Test
+    @DisplayName("should configure OpenAiCompatibleLlmClient when rillway.ai.openai.api-key is configured")
+    void should_configure_openai_llm_client_when_properties_provided() {
+        contextRunner.withPropertyValues(
+                "rillway.ai.openai.enabled=true",
+                "rillway.ai.openai.api-key=sk-test-key-123456",
+                "rillway.ai.openai.base-url=https://api.deepseek.com/v1",
+                "rillway.ai.openai.model=deepseek-chat"
+        ).run(context -> {
+            assertThat(context).hasSingleBean(LlmClient.class);
+            assertThat(context.getBean(LlmClient.class)).isInstanceOf(com.wegongdu.rillway.ai.llm.OpenAiCompatibleLlmClient.class);
+        });
+    }
+
+    @Test
+    @DisplayName("should configure OpenAiCompatibleLlmClient when database has active default config")
+    void should_configure_openai_llm_client_when_db_config_present() {
+        contextRunner.withBean(com.wegongdu.rillway.ai.config.AiModelConfigRepository.class, () -> {
+            var repo = new com.wegongdu.rillway.autoconfigure.persistence.InMemoryAiModelConfigRepository();
+            repo.save(com.wegongdu.rillway.ai.config.AiModelConfig.builder("cfg_01")
+                    .providerName("deepseek")
+                    .baseUrl("https://api.deepseek.com/v1")
+                    .apiKey("sk-db-key")
+                    .modelName("deepseek-chat")
+                    .isDefault(true)
+                    .enabled(true)
+                    .build());
+            return repo;
+        }).run(context -> {
+            assertThat(context).hasSingleBean(LlmClient.class);
+            assertThat(context.getBean(LlmClient.class)).isInstanceOf(com.wegongdu.rillway.ai.llm.OpenAiCompatibleLlmClient.class);
         });
     }
 

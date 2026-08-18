@@ -13,6 +13,20 @@ public interface BindingConfigRepository {
 
     Optional<BindingConfig> findByBusinessType(String businessType);
 
+    default Optional<BindingConfig> findByTableName(String tableName) {
+        if (tableName == null) return Optional.empty();
+        return listAll().stream()
+                .filter(BindingConfig::enabled)
+                .filter(c -> tableName.equalsIgnoreCase(c.tableName()))
+                .findFirst();
+    }
+
+    default Optional<BindingConfig> findMatching(String identifier) {
+        if (identifier == null) return Optional.empty();
+        return findByBusinessType(identifier)
+                .or(() -> findByTableName(identifier));
+    }
+
     Optional<BindingConfig> findByProcessDefinitionId(String processDefinitionId);
 
     List<BindingConfig> listAll();

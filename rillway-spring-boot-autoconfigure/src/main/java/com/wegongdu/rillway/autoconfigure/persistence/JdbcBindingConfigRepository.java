@@ -58,6 +58,22 @@ public class JdbcBindingConfigRepository implements BindingConfigRepository {
     }
 
     @Override
+    public Optional<BindingConfig> findByTableName(String tableName) {
+        if (tableName == null) return Optional.empty();
+        String sql = "SELECT * FROM rillway_binding_config WHERE LOWER(table_name) = LOWER(?)";
+        List<BindingConfig> list = jdbcTemplate.query(sql, new BindingConfigRowMapper(), tableName);
+        return list.stream().filter(BindingConfig::enabled).findFirst();
+    }
+
+    @Override
+    public Optional<BindingConfig> findMatching(String identifier) {
+        if (identifier == null) return Optional.empty();
+        String sql = "SELECT * FROM rillway_binding_config WHERE LOWER(business_type) = LOWER(?) OR LOWER(table_name) = LOWER(?)";
+        List<BindingConfig> list = jdbcTemplate.query(sql, new BindingConfigRowMapper(), identifier, identifier);
+        return list.stream().filter(BindingConfig::enabled).findFirst();
+    }
+
+    @Override
     public Optional<BindingConfig> findByProcessDefinitionId(String processDefinitionId) {
         if (processDefinitionId == null) return Optional.empty();
         String sql = "SELECT * FROM rillway_binding_config WHERE process_definition_id = ?";

@@ -7,21 +7,26 @@ import com.wegongdu.rillway.agent.spi.AgentRegistry;
 import com.wegongdu.rillway.ai.cache.InMemoryResolutionCacheRepository;
 import com.wegongdu.rillway.ai.cache.ResolutionCacheManager;
 import com.wegongdu.rillway.ai.cache.ResolutionCacheRepository;
+import com.wegongdu.rillway.ai.config.AiModelConfig;
+import com.wegongdu.rillway.ai.config.AiModelConfigRepository;
 import com.wegongdu.rillway.ai.identity.AiAssigneeResolver;
 import com.wegongdu.rillway.ai.intent.FakeIntentInterpreter;
 import com.wegongdu.rillway.ai.intent.IntentInterpreter;
 import com.wegongdu.rillway.ai.llm.FakeLlmClient;
 import com.wegongdu.rillway.ai.llm.LlmClient;
+import com.wegongdu.rillway.ai.llm.OpenAiCompatibleLlmClient;
 import com.wegongdu.rillway.audit.sink.AuditSink;
 import com.wegongdu.rillway.audit.sink.InMemoryAuditSink;
 import com.wegongdu.rillway.audit.sink.NoOpAuditSink;
 import com.wegongdu.rillway.autoconfigure.binding.EntityStatusAutoUpdater;
 import com.wegongdu.rillway.autoconfigure.event.SpringApplicationEventPublisherBridge;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcAiModelConfigRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcBindingConfigRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcResolutionCacheRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcTaskRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.InMemoryAiModelConfigRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.RillwayDatabaseInitializer;
 import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
 import com.wegongdu.rillway.core.identity.IdentityService;
@@ -104,7 +109,39 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public LlmClient llmClient() {
+    public LlmClient llmClient(
+            RillwayProperties properties,
+            ObjectProvider<AiModelConfigRepository> aiModelConfigRepoProvider
+    ) {
+        // 1. Check database AI model configuration if available
+        AiModelConfigRepository repo = aiModelConfigRepoProvider.getIfAvailable();
+        if (repo != null) {
+            java.util.Optional<AiModelConfig> dbConfigOpt = repo.findDefault();
+            if (dbConfigOpt.isPresent()) {
+                AiModelConfig cfg = dbConfigOpt.get();
+                return new OpenAiCompatibleLlmClient(
+                        cfg.baseUrl(),
+                        cfg.apiKey(),
+                        cfg.modelName(),
+                        cfg.temperature() != null ? cfg.temperature() : 0.1,
+                        cfg.timeoutSeconds() != null ? java.time.Duration.ofSeconds(cfg.timeoutSeconds()) : java.time.Duration.ofSeconds(30)
+                );
+            }
+        }
+
+        // 2. Check application properties
+        RillwayProperties.OpenAi openAi = properties.getAi().getOpenai();
+        if (openAi.isEnabled() || (openAi.getApiKey() != null && !openAi.getApiKey().isBlank())) {
+            return new OpenAiCompatibleLlmClient(
+                    openAi.getBaseUrl(),
+                    openAi.getApiKey(),
+                    openAi.getModel(),
+                    openAi.getTemperature() != null ? openAi.getTemperature() : 0.1,
+                    openAi.getTimeoutSeconds() != null ? java.time.Duration.ofSeconds(openAi.getTimeoutSeconds()) : java.time.Duration.ofSeconds(30)
+            );
+        }
+
+        // 3. Fallback to offline test fake client
         return new FakeLlmClient();
     }
 
@@ -226,6 +263,15 @@ public class RillwayAutoConfiguration {
         ) {
             return new JdbcResolutionCacheRepository(new JdbcTemplate(dataSource), objectMapper);
         }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public AiModelConfigRepository aiModelConfigRepository(
+                DataSource dataSource,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcAiModelConfigRepository(new JdbcTemplate(dataSource));
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -259,6 +305,12 @@ public class RillwayAutoConfiguration {
         @ConditionalOnMissingBean
         public ResolutionCacheRepository resolutionCacheRepository() {
             return new InMemoryResolutionCacheRepository();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public AiModelConfigRepository aiModelConfigRepository() {
+            return new InMemoryAiModelConfigRepository();
         }
     }
 
