@@ -190,20 +190,34 @@ rillway:
 
 ---
 
-### 4. 业务表状态字段自动回写机制 (Entity Status Auto-Update)
+### 4. 零代码单据状态回写机制 (Entity Status Auto-Update)
 
-无需手写任何 MyBatis / JPA Update 代码，在流程流转、审批通过或驳回时，Rillway 自动触发 `EntityStatusAutoUpdater` 执行精准的 SQL 回写：
+#### 痛点对比：传统工作流 vs Rillway
+| 对比维度 | 传统工作流 (Flowable / Activiti) | ⚡ Rillway AI 原生引擎 |
+| :--- | :--- | :--- |
+| **状态同步方式** | 必须编写 `JavaDelegate` / `ExecutionListener` 注入业务 Mapper 手动 `updateById()` | **零代码配置驱动**，配置表指定 `status_column` 即可 |
+| **事务一致性** | 流程引擎库与业务库分离，极易产生**流程走完但业务单据状态未更新**的分布式事务脏数据 | **本地事务原子绑定**，共享 Spring `DataSourceTransactionManager`，同生共死 |
+| **代码侵入性** | 业务代码与流程 API 强耦合，充斥大量 `runtimeService` 与各种监听器模板代码 | **零侵入**，业务单据只有普通的 JavaBean，完全感知不到工作流框架存在 |
 
-```sql
--- 流程审批通过时，底层自动执行：
-UPDATE biz_purchase_order 
-SET status = 'APPROVED' 
-WHERE id = 'PO_20260818_001';
+#### 🔄 全自动状态回写闭环链路：
+```text
+ 1. 业务提交单据             2. 审批流转中               3. 终审通过 / 驳回
+┌────────────────┐      ┌────────────────┐      ┌─────────────────────────┐
+│ PurchaseOrder  │ ───► │  多级审批推进   │ ───► │ EntityStatusAutoUpdater │
+│ status='DRAFT' │      │ status='UNDER_ │      │ 自动拦截 COMPLETED 事件  │
+└────────────────┘      │    REVIEW'     │      └────────────┬────────────┘
+                        └────────────────┘                   │
+                                                             ▼
+                                                自动执行精准 SQL 回写：
+                                                UPDATE biz_purchase_order 
+                                                SET status = 'APPROVED' 
+                                                WHERE id = '100293847291';
 ```
 
-- **事务同生共死 (Atomic & Zero-Distributed-Tx)**：
-  底层基于同一个 Spring `@Transactional` 本地事务与数据库连接，业务单据插入、流程实例流转与状态字段回写在**同一本地事务中提交或回滚**，彻底告别分布式事务框架（如 Seata）的运维与性能负担！
-- **自适应降级**：无数据库环境自动转为内存模拟，本地单测开箱即跑。
+#### ⚙️ 核心工作原理解析：
+1. **自动元数据提取**：流程发起时，引擎从实体类注解（`@TableName` / `@TableId` 或 `@RillwayEntity`）提取出当前单据关联的表名 `biz_purchase_order` 和主键 ID `100293847291`；
+2. **规则自动路由**：匹配 `rillway_binding_config` 表中预设的 `status_column`（状态列名）、`approved_value`（通过值）与 `rejected_value`（驳回值）；
+3. **本地事务强一致保障**：当流程触发终审节点时，引擎通过 Spring `JdbcTemplate` 直接在**当前业务事务连接**内执行原子更新。若后续业务抛出异常，单据状态回写与流程实例状态一并回滚，彻底根除分布式事务一致性难题！
 
 ---
 

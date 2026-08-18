@@ -193,18 +193,32 @@ rillway:
 
 ### 4. Zero-Code Entity Status Auto-Update (EntityStatusAutoUpdater)
 
-Eliminate boilerplate MyBatis / JPA Update statements. Upon task approvals or rejections, Rillway automatically triggers `EntityStatusAutoUpdater` to update the bound table:
+#### Pain Point Comparison: Traditional Engines vs Rillway
+| Metric | Traditional Engines (Flowable / Activiti) | ⚡ Rillway AI-Native Engine |
+| :--- | :--- | :--- |
+| **Status Synchronization** | Must write verbose `JavaDelegate` / `ExecutionListener` injecting business Mappers to call `updateById()` | **Zero-code config driven**—just declare `status_column` in config |
+| **Transactional Consistency** | Separate databases between engine and business entities; prone to dirty data where workflows complete but entities fail to update | **Local Transaction Bound**—shares Spring `DataSourceTransactionManager`, commits and rolls back atomically |
+| **Code Intrusion** | Business code is heavily coupled with workflow APIs, flooded with `runtimeService` and listener boilerplates | **Zero Intrusion**—domain records remain clean POJOs/JavaBeans with zero workflow framework dependencies |
 
-```sql
--- Automatically executed by Rillway upon approval:
-UPDATE biz_purchase_order 
-SET status = 'APPROVED' 
-WHERE id = 'PO_20260818_001';
+#### 🔄 Automated Status Synchronization Lifecycle:
+```text
+ 1. Submit Entity            2. Multi-Stage Review          3. Final Approval / Rejection
+┌────────────────┐      ┌────────────────────┐      ┌─────────────────────────┐
+│ PurchaseOrder  │ ───► │ Workflow Execution │ ───► │ EntityStatusAutoUpdater │
+│ status='DRAFT' │      │ status='UNDER_     │      │ Intercepts COMPLETED    │
+└────────────────┘      │    REVIEW'         │      └────────────┬────────────┘
+                        └────────────────────┘                   │
+                                                                 ▼
+                                                    Executes Precise SQL Update:
+                                                    UPDATE biz_purchase_order 
+                                                    SET status = 'APPROVED' 
+                                                    WHERE id = '100293847291';
 ```
 
-- **Local Transaction Atomicity (Zero-Distributed-Tx)**:
-  Shares the same Spring `@Transactional` local database connection. Domain record insertion, workflow state transition, and status column updates are committed or rolled back atomically within the **same local transaction** without external distributed transaction coordinators (e.g. Seata).
-- **Graceful Fallback**: Automatically degrades to in-memory simulation in non-database environments (e.g. unit tests).
+#### ⚙️ How It Works:
+1. **Automatic Metadata Extraction**: Upon workflow initiation, Rillway extracts the bound table name (`biz_purchase_order`) and primary key ID (`100293847291`) from entity annotations (`@TableName`, `@TableId`, or `@RillwayEntity`);
+2. **Rule Matching**: Matches pre-configured rules in `rillway_binding_config` (`status_column`, `approved_value`, `rejected_value`);
+3. **Local Transaction Atomicity**: When the process reaches a terminal node, Rillway uses Spring's `JdbcTemplate` to execute the SQL update directly within the **active local business transaction connection**. If downstream business logic throws an error, both the workflow state and the entity status roll back together.
 
 ---
 
