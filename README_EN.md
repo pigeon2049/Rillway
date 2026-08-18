@@ -210,36 +210,49 @@ WHERE id = 'PO_20260818_001';
 
 ### 5. Domain Event Listener System (Spring Event Bridge)
 
-Rillway natively bridges workflow lifecycle events directly into Spring's standard `@EventListener` ecosystem, allowing seamless, decoupled integration with downstream systems (DingTalk/Slack notifications, email alerts, ERP purchase order creation):
+Rillway natively bridges workflow lifecycle events directly into Spring's standard `@EventListener` ecosystem, supporting both **Global System-Wide Auditing** and **Targeted BusinessKey / Order-Type Filtering**:
 
+#### ① Global Audit Listeners (Ideal for APM Tracing, Centralized Logs, BI Dashboards)
 ```java
 @Component
-public class PurchaseWorkflowEventListener {
+public class GlobalProcessAuditListener {
 
-    // 1. Listen for process initiation
+    // 🌟 Listens to all workflow initiation events across the platform
     @EventListener
-    public void onProcessStarted(ProcessEvent.ProcessStartedEvent event) {
-        log.info("Workflow started: instanceId={}, businessKey={}, initiator={}", 
+    public void onAnyProcessStarted(ProcessEvent.ProcessStartedEvent event) {
+        log.info("[Global Audit] Workflow started: instanceId={}, businessKey={}, initiator={}", 
                 event.processInstanceId(), event.businessKey(), event.initiator());
     }
 
-    // 2. Listen for node decision completion
+    // 🌟 Listens to all task transitions and decisions
     @EventListener
-    public void onNodeCompleted(ProcessEvent.NodeCompletedEvent event) {
-        log.info("Node [{}] completed: actor={}, decision={}, reason={}", 
+    public void onAnyNodeCompleted(ProcessEvent.NodeCompletedEvent event) {
+        log.info("[Global Audit] Node [{}] completed: actor={}, decision={}, reason={}", 
                 event.nodeName(), event.actor(), event.decision().type(), event.decision().reason());
     }
+}
+```
 
-    // 3. Listen for final process completion / archiving (trigger ERP receipts)
-    @EventListener
-    public void onProcessCompleted(ProcessEvent.ProcessCompletedEvent event) {
-        if (event.isSuccess()) {
-            log.info("🎉 Order [{}] approved! Triggering ERP receipt creation...", event.businessKey());
-            erpService.createPurchaseReceipt(event.businessKey());
-        } else {
-            log.warn("❌ Order [{}] rejected. Notifying applicant...", event.businessKey());
-            notifyService.sendRejectNotice(event.businessKey());
-        }
+#### ② Targeted BusinessKey / Order-Type Listeners (Using Spring SpEL Conditions)
+Zero boilerplate `if-else` checks—filter precisely using SpEL conditions:
+
+```java
+@Component
+public class PurchaseOrderEventListener {
+
+    // 🎯 Listens ONLY to purchase orders (businessKey starts with 'biz_purchase_order') that are APPROVED
+    @EventListener(condition = "#event.businessKey != null && #event.businessKey.startsWith('biz_purchase_order') && #event.isSuccess")
+    public void onPurchaseOrderApproved(ProcessEvent.ProcessCompletedEvent event) {
+        String orderId = event.businessKey().replace("biz_purchase_order:", "");
+        log.info("🎉 Purchase Order [{}] approved! Triggering ERP receipt creation...", orderId);
+        erpService.createPurchaseReceipt(orderId);
+    }
+
+    // 🎯 Listens ONLY to purchase orders that are REJECTED -> alert applicant via WeChat/Slack
+    @EventListener(condition = "#event.businessKey != null && #event.businessKey.startsWith('biz_purchase_order') && !#event.isSuccess")
+    public void onPurchaseOrderRejected(ProcessEvent.ProcessCompletedEvent event) {
+        log.warn("❌ Purchase Order [{}] rejected. Sending instant alert...", event.businessKey());
+        notifyService.sendRejectAlert(event.businessKey());
     }
 }
 ```

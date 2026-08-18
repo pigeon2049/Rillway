@@ -209,36 +209,49 @@ WHERE id = 'PO_20260818_001';
 
 ### 5. 领域事件监听机制 (Domain Event System)
 
-Rillway 提供了双模事件发布机制，深度融合 Spring 官方 `@EventListener` 生态。业务系统可零侵入监听流程各阶段生命周期，实现下游联动（如发钉钉/企业微信、邮件通知、ERP 自动开单）：
+Rillway 原生深度桥接 Spring 官方 `@EventListener` 生态，支持**全局通用监听（审计/日志）**与**基于 BusinessKey / 单据类型的精准条件过滤监听（下游业务联动）**：
 
+#### ① 全局通用监听（适合：统一审计日志、全链路 APM 追踪、中台大屏）
 ```java
 @Component
-public class PurchaseWorkflowEventListener {
+public class GlobalProcessAuditListener {
 
-    // 1. 监听流程发起事件
+    // 🌟 全局监听所有流程的发起事件
     @EventListener
-    public void onProcessStarted(ProcessEvent.ProcessStartedEvent event) {
-        log.info("流程已启动: 实例ID={}, 单据Key={}, 发起人={}", 
+    public void onAnyProcessStarted(ProcessEvent.ProcessStartedEvent event) {
+        log.info("[全局审计] 流程启动: 实例ID={}, 单据Key={}, 发起人={}", 
                 event.processInstanceId(), event.businessKey(), event.initiator());
     }
 
-    // 2. 监听审批节点完成事件（记录决策）
+    // 🌟 全局监听所有流程的节点流转与审批决策
     @EventListener
-    public void onNodeCompleted(ProcessEvent.NodeCompletedEvent event) {
-        log.info("节点 [{}] 审批完成: 处理人={}, 决策={}, 意见={}", 
+    public void onAnyNodeCompleted(ProcessEvent.NodeCompletedEvent event) {
+        log.info("[全局审计] 节点 [{}] 审批流转: 处理人={}, 决策={}, 意见={}", 
                 event.nodeName(), event.actor(), event.decision().type(), event.decision().reason());
     }
+}
+```
 
-    // 3. 监听流程终审归档事件（触发下游 ERP / 发邮件）
-    @EventListener
-    public void onProcessCompleted(ProcessEvent.ProcessCompletedEvent event) {
-        if (event.isSuccess()) {
-            log.info("🎉 采购单 [{}] 终审通过，自动调用 ERP 创建采购入库单！", event.businessKey());
-            erpService.createPurchaseReceipt(event.businessKey());
-        } else {
-            log.warn("❌ 采购单 [{}] 已被驳回，通知申请人修正！", event.businessKey());
-            notifyService.sendRejectNotice(event.businessKey());
-        }
+#### ② 基于 BusinessKey / 单据类型的精准过滤监听（适合：特定单据开单、发邮件）
+通过 Spring SpEL 表达式 `condition`，**无需手写 if-else 过滤**，只处理目标业务单据：
+
+```java
+@Component
+public class PurchaseOrderEventListener {
+
+    // 🎯 仅监听采购单 (businessKey 以 'biz_purchase_order' 开头) 且【终审通过】的事件
+    @EventListener(condition = "#event.businessKey != null && #event.businessKey.startsWith('biz_purchase_order') && #event.isSuccess")
+    public void onPurchaseOrderApproved(ProcessEvent.ProcessCompletedEvent event) {
+        String orderId = event.businessKey().replace("biz_purchase_order:", "");
+        log.info("🎉 采购单 [{}] 终审批准通过，自动调用 ERP 创建采购入库单！", orderId);
+        erpService.createPurchaseReceipt(orderId);
+    }
+
+    // 🎯 仅监听采购单【审批驳回】事件 -> 通知申请人
+    @EventListener(condition = "#event.businessKey != null && #event.businessKey.startsWith('biz_purchase_order') && !#event.isSuccess")
+    public void onPurchaseOrderRejected(ProcessEvent.ProcessCompletedEvent event) {
+        log.warn("❌ 采购单 [{}] 已被驳回，推送企业微信通知申请人！", event.businessKey());
+        wechatNotifyService.sendRejectAlert(event.businessKey());
     }
 }
 ```
