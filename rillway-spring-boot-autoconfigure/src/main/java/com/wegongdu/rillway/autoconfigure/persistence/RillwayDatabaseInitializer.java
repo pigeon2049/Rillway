@@ -99,6 +99,27 @@ public class RillwayDatabaseInitializer implements InitializingBean {
                 )
             """);
         }
+
+        if (!tableExists("rillway_resolution_cache")) {
+            log.info("Rillway table [rillway_resolution_cache] not found. Creating table automatically...");
+            jdbcTemplate.execute("""
+                CREATE TABLE rillway_resolution_cache (
+                    id VARCHAR(64) PRIMARY KEY,
+                    definition_id VARCHAR(64) NOT NULL,
+                    node_id VARCHAR(64) NOT NULL,
+                    prompt_hash VARCHAR(64) NOT NULL,
+                    department_id VARCHAR(64),
+                    post_code VARCHAR(64),
+                    resolved_user_id VARCHAR(64),
+                    resolved_role VARCHAR(64),
+                    candidate_users_json VARCHAR(512),
+                    candidate_roles_json VARCHAR(512),
+                    hit_count INT DEFAULT 0,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """);
+        }
     }
 
     private boolean tableExists(String tableName) {

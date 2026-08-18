@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wegongdu.rillway.agent.guard.AgentAuthorityGuard;
 import com.wegongdu.rillway.agent.registry.InMemoryAgentRegistry;
 import com.wegongdu.rillway.agent.spi.AgentRegistry;
+import com.wegongdu.rillway.ai.cache.InMemoryResolutionCacheRepository;
+import com.wegongdu.rillway.ai.cache.ResolutionCacheManager;
+import com.wegongdu.rillway.ai.cache.ResolutionCacheRepository;
+import com.wegongdu.rillway.ai.identity.AiAssigneeResolver;
 import com.wegongdu.rillway.ai.intent.FakeIntentInterpreter;
 import com.wegongdu.rillway.ai.intent.IntentInterpreter;
-import com.wegongdu.rillway.ai.identity.AiAssigneeResolver;
 import com.wegongdu.rillway.ai.llm.FakeLlmClient;
 import com.wegongdu.rillway.ai.llm.LlmClient;
 import com.wegongdu.rillway.audit.sink.AuditSink;
@@ -16,6 +19,7 @@ import com.wegongdu.rillway.autoconfigure.binding.EntityStatusAutoUpdater;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcBindingConfigRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcResolutionCacheRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.JdbcTaskRepository;
 import com.wegongdu.rillway.autoconfigure.persistence.RillwayDatabaseInitializer;
 import com.wegongdu.rillway.core.identity.HumanAssigneeResolver;
@@ -105,8 +109,18 @@ public class RillwayAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public HumanAssigneeResolver humanAssigneeResolver(LlmClient llmClient, IdentityService identityService) {
-        return new AiAssigneeResolver(llmClient, identityService);
+    public ResolutionCacheManager resolutionCacheManager(ResolutionCacheRepository resolutionCacheRepository) {
+        return new ResolutionCacheManager(resolutionCacheRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public HumanAssigneeResolver humanAssigneeResolver(
+            LlmClient llmClient,
+            IdentityService identityService,
+            ResolutionCacheManager resolutionCacheManager
+    ) {
+        return new AiAssigneeResolver(llmClient, identityService, resolutionCacheManager);
     }
 
     @Bean
@@ -201,6 +215,16 @@ public class RillwayAutoConfiguration {
         ) {
             return new JdbcBindingConfigRepository(new JdbcTemplate(dataSource));
         }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ResolutionCacheRepository resolutionCacheRepository(
+                DataSource dataSource,
+                ObjectMapper objectMapper,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcResolutionCacheRepository(new JdbcTemplate(dataSource), objectMapper);
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -228,6 +252,12 @@ public class RillwayAutoConfiguration {
         @ConditionalOnMissingBean
         public BindingConfigRepository bindingConfigRepository() {
             return new InMemoryBindingConfigRepository();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ResolutionCacheRepository resolutionCacheRepository() {
+            return new InMemoryResolutionCacheRepository();
         }
     }
 

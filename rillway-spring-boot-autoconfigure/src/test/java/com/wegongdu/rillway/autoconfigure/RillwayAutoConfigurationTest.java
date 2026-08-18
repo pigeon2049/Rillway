@@ -40,6 +40,8 @@ class RillwayAutoConfigurationTest {
             assertThat(context).hasSingleBean(BindingConfigRepository.class);
             assertThat(context).hasSingleBean(IdentityService.class);
             assertThat(context).hasSingleBean(LlmClient.class);
+            assertThat(context).hasSingleBean(com.wegongdu.rillway.ai.cache.ResolutionCacheRepository.class);
+            assertThat(context).hasSingleBean(com.wegongdu.rillway.ai.cache.ResolutionCacheManager.class);
             assertThat(context).hasSingleBean(HumanAssigneeResolver.class);
             assertThat(context).hasSingleBean(TaskService.class);
         });

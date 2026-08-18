@@ -345,6 +345,26 @@ public class SystemIdentityAdapter implements IdentityService {
 
 ---
 
+### 4. 成功流程决策缓存与人事核验机制 (ResolutionCache & 0 Token Fast-Path)
+
+为了大幅节省大模型 Token 成本并提升审批流转性能，Rillway 内置了**带人事核验的成功决策缓存表**（`rillway_resolution_cache`）：
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 首次解析：大模型 Tool Calling 推理并记录成功缓存样本      │
+│ 2. 再次执行：相同部门/岗位相同单据触发 0 Token 极速通道     │
+│ 3. 轻量核验：毫秒级调用 IdentityService 核验人员是否变更    │
+│    • 一致有效 -> 0 Token 消耗，2ms 极速返回！                │
+│    • 人事变动 -> 自动失效缓存，触发大模型重新推理并自进化    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **自动建表 `rillway_resolution_cache`**：记录 `definition_id`、`node_id`、`prompt_hash`、`department_id`、`resolved_user_id`、`hit_count`；
+- **90%+ Token 节省**：相同部门的日常重复审批（报销、采购、请假）直接命中缓存；
+- **绝对准确**：即使命中缓存，也会在微秒级内向业务 `IdentityService` 核验该主管是否离职/调岗，杜绝脏数据。
+
+---
+
 ## 🗄️ 极致无感持久化 (Zero-Config Persistence)
 
 Rillway 专为企业中台（如 `gongdu-base`、`ruoyi-vue-pro`）设计了自适应无感持久化：

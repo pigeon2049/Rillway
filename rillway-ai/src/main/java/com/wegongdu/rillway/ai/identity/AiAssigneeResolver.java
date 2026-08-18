@@ -1,5 +1,7 @@
 package com.wegongdu.rillway.ai.identity;
 
+import com.wegongdu.rillway.ai.cache.InMemoryResolutionCacheRepository;
+import com.wegongdu.rillway.ai.cache.ResolutionCacheManager;
 import com.wegongdu.rillway.ai.llm.FakeLlmClient;
 import com.wegongdu.rillway.ai.llm.LlmClient;
 import com.wegongdu.rillway.core.context.ProcessContext;
@@ -14,20 +16,27 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * AI-native human assignee resolver powered by LLMs, UserProfiles, and organizational Tool Calling.
+ * AI-native human assignee resolver powered by LLMs, UserProfiles, organizational Tool Calling,
+ * and ResolutionCache for zero-token acceleration and identity verification.
  */
 public class AiAssigneeResolver implements HumanAssigneeResolver {
 
     private final LlmClient llmClient;
     private final IdentityService identityService;
+    private final ResolutionCacheManager cacheManager;
 
     public AiAssigneeResolver(IdentityService identityService) {
-        this(new FakeLlmClient(), identityService);
+        this(new FakeLlmClient(), identityService, new ResolutionCacheManager(new InMemoryResolutionCacheRepository()));
     }
 
     public AiAssigneeResolver(LlmClient llmClient, IdentityService identityService) {
+        this(llmClient, identityService, new ResolutionCacheManager(new InMemoryResolutionCacheRepository()));
+    }
+
+    public AiAssigneeResolver(LlmClient llmClient, IdentityService identityService, ResolutionCacheManager cacheManager) {
         this.llmClient = llmClient != null ? llmClient : new FakeLlmClient();
         this.identityService = identityService;
+        this.cacheManager = cacheManager != null ? cacheManager : new ResolutionCacheManager(new InMemoryResolutionCacheRepository());
     }
 
     @Override
@@ -50,7 +59,24 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
         }
 
         if (targetPrompt != null && !targetPrompt.isBlank() && identityService != null) {
-            ResolvedFromPrompt result = resolveWithAiOrSemantic(targetPrompt, context);
+            String initiator = context != null && context.initiator() != null ? context.initiator() : "default_user";
+            UserProfile initiatorProfile = identityService.getUserProfile(initiator).orElse(null);
+
+            // 1. Fast-Path: Check valid decision cache (0 Token)
+            Optional<ResolvedAssignee> cachedOpt = cacheManager.findValidAssignee(
+                    node.id(),
+                    node.id(),
+                    targetPrompt,
+                    initiatorProfile,
+                    identityService
+            );
+
+            if (cachedOpt.isPresent()) {
+                return cachedOpt.get();
+            }
+
+            // 2. Slow-Path: Resolve with LLM Tool Calling or Semantic Reasoner
+            ResolvedFromPrompt result = resolveWithAiOrSemantic(targetPrompt, context, initiatorProfile);
             if (result.userId != null) {
                 assigneeUser = result.userId;
             }
@@ -60,6 +86,20 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
             if (result.candidateUsers != null && !result.candidateUsers.isEmpty()) {
                 candidateUsers.addAll(result.candidateUsers);
             }
+
+            // 3. Record successful resolution into cache for future zero-token execution
+            ResolvedAssignee newlyResolved = ResolvedAssignee.of(assigneeUser, assigneeRole, candidateUsers, candidateRoles);
+            if (assigneeUser != null || assigneeRole != null || !candidateUsers.isEmpty()) {
+                cacheManager.recordSuccessfulResolution(
+                        node.id(),
+                        node.id(),
+                        targetPrompt,
+                        initiatorProfile,
+                        newlyResolved
+                );
+            }
+
+            return newlyResolved;
         }
 
         return ResolvedAssignee.of(assigneeUser, assigneeRole, candidateUsers, candidateRoles);
@@ -67,7 +107,7 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
 
     private record ResolvedFromPrompt(String userId, String roleCode, List<String> candidateUsers) {}
 
-    private ResolvedFromPrompt resolveWithAiOrSemantic(String prompt, ProcessContext context) {
+    private ResolvedFromPrompt resolveWithAiOrSemantic(String prompt, ProcessContext context, UserProfile initiatorProfile) {
         String initiator = context != null && context.initiator() != null ? context.initiator() : "default_user";
         String lowerPrompt = prompt.toLowerCase();
 
@@ -121,13 +161,11 @@ public class AiAssigneeResolver implements HumanAssigneeResolver {
         }
 
         // 2. High-accuracy semantic understanding & UserProfile penetration
-        Optional<UserProfile> initiatorProfileOpt = identityService.getUserProfile(initiator);
-
         // 2.1 Department head / manager resolution (dept-aware)
         if (lowerPrompt.contains("主管") || lowerPrompt.contains("部门负责人") || lowerPrompt.contains("部门经理") || lowerPrompt.contains("head")) {
             String deptId = null;
-            if (initiatorProfileOpt.isPresent()) {
-                deptId = initiatorProfileOpt.get().departmentId();
+            if (initiatorProfile != null) {
+                deptId = initiatorProfile.departmentId();
             }
             if (deptId == null && context != null && context.get("department") != null) {
                 deptId = context.getString("department");
