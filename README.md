@@ -88,10 +88,33 @@ rillway:
 
 ---
 
-### 第 3 步：对接企业组织架构与人员服务 (`IdentityService` SPI)
+### 第 3 步：对接企业组织架构与人员（两种方式任选其一）
 
-大模型在理解审批制度时，需要知道“申请人直属领导是谁”、“研发总监是谁”。
-在业务系统中实现 `IdentityService` 并注册为 Spring `@Service`，大模型将通过 **Tool Calling 自动调用该接口获取人员数据**：
+#### 🌟 方式 A（推荐·零代码）：直接注册系统实体类的 Class (`OrgEntityRegistry`)
+
+**完全无需手写任何 Mapper、SQL 或 Service 实现！** 开发者只需将项目中已有的用户、部门、角色或岗位实体 Class 注册为一个 Spring Bean，引擎通过**反射与 DDL 注解自省器（`EntityClassIntrospector`）**，全自动推导表名、主键、列映射及 Swagger `@Schema` 注释，并直接供大模型理解与调用：
+
+```java
+@Configuration
+public class WorkflowOrgConfig {
+
+    @Bean
+    public OrgEntityRegistry orgEntityRegistry() {
+        return OrgEntityRegistry.builder()
+                .userEntity(SystemUserDO.class)      // 员工/用户实体
+                .deptEntity(SystemDeptDO.class)      // 部门实体
+                .roleEntity(SystemRoleDO.class)      // 角色实体
+                .postEntity(SystemPostDO.class)      // 岗位实体（可选）
+                .build();
+    }
+}
+```
+
+---
+
+#### 方式 B：自定义实现 `IdentityService` SPI 接口（适合跨微服务 RPC）
+
+如果系统需要通过 Feign / RPC 远程调用用户中台，可选择实现 `IdentityService` 接口：
 
 ```java
 @Service
@@ -129,7 +152,7 @@ public class EnterpriseIdentityService implements IdentityService {
         return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
     }
 
-    // 4. 根据角色或岗位查询人员列表（如 'FINANCE_DIRECTOR'）
+    // 4. 根据角色或岗位查询人员列表（如 'ROLE_HRBP'）
     @Override
     public List<String> getUsersByRole(String roleCode) {
         return userMapper.selectUserIdsByRole(roleCode);
@@ -146,7 +169,7 @@ public class EnterpriseIdentityService implements IdentityService {
     }
 }
 ```
-> 💡 **零配置默认兜底**：若业务工程未提供自定义 `IdentityService`，Rillway 会自动启用内存版 `DefaultIdentityService`，单测与本地开发开箱即用。
+> 💡 **开箱即用**：若业务工程未配置以上任何内容，Rillway 会自动启用内存版 `DefaultIdentityService`，单测与本地快速验证零门槛！
 
 ---
 
@@ -374,6 +397,23 @@ public class PurchaseOrderEventListener {
   // 领导离职或为空时，自动向上寻根至部门负责人或管理员兜底
   Optional<String> leader = identityService.getEffectiveDirectLeader(userId);
   ```
+
+### 7. 基于实体 Class 的 DDL Schema 自省与大模型 Tool Calling 编译器
+
+#### 架构工作流程：
+```text
+ 1. 注册实体 Class        2. 自动反射与 DDL 注解自省            3. 赋能大模型 Tool Calling
+┌─────────────────┐      ┌─────────────────────────┐      ┌────────────────────────┐
+│ SystemUserDO    │ ───► │ EntityClassIntrospector │ ───► │ buildWorkflowDag       │
+│ SystemDeptDO    │      │ 自动提取表名、列名、注释  │      │ 大模型输出强类型 DAG    │
+│ SystemRoleDO    │      │ 及部门外键、领导列关联    │      │ START -> RULE -> HUMAN │
+└─────────────────┘      └─────────────────────────┘      └────────────────────────┘
+```
+
+#### 特性优势：
+1. **开发者零代码成本**：无需写任何复杂的查询接口，直接传 Class；
+2. **拒绝伪流程硬编码**：大模型通过标准 OpenAI Tool Calling 接口调用 `buildWorkflowDag`，动态根据业务单据（`day`, `amount`, `type`）与组织架构（`deptName`, `leaderUserId`, `roleCode`）输出包含通用条件表达式和拓扑连线的闭环 DAG 图；
+3. **前端零门槛渲染**：生成的 `ProcessDefinition` 可直接被前端流程设计器或 `ProcessPreviewer` 进行路径预测展示与节点定位。
 
 ---
 
