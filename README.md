@@ -57,7 +57,7 @@
     <dependency>
         <groupId>com.github.pigeon2049.Rillway</groupId>
         <artifactId>rillway-spring-boot-starter</artifactId>
-        <version>v0.1.0</version>
+        <version>v0.1.1</version>
     </dependency>
 </dependencies>
 ```
