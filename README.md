@@ -9,9 +9,11 @@
   <a href="#key-features">Features</a> •
   <a href="#core-concepts">Core Concepts</a> •
   <a href="#quick-start">Quick Start</a> •
+  <a href="#zero-code-binding">Zero-Code Binding</a> •
+  <a href="#identity-and-ai">Identity & AI Dispatching</a> •
+  <a href="#resolution-cache">Resolution Cache</a> •
   <a href="#agent-governance">Agent Governance</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#project-modules">Modules</a> •
   <a href="#roadmap">Roadmap</a>
 </p>
 
@@ -28,7 +30,12 @@
 
 ## 🌟 核心理念与特性 (Key Features)
 
-- 🧠 **AI-Native & Intent-Driven**：支持通过自然语言表达业务意图，由 AI 解释器将其转换为可验证、可预览、可执行的结构化流程定义，无需编写复杂的 BPMN XML。
+- 🧠 **AI-Native & Intent-Driven**：支持通过人类大白话自然语言表达业务意图与审批人指派，由大模型（LLM）+ 组织架构 Tool Calling 自主推理完成指派，彻底告别死板复杂的伪表达式语法。
+- 🏢 **零代码单据接入与状态自动回写 (Zero-Code Binding)**：配置表驱动，流程审批通过/驳回时引擎自动回写业务物理表状态字段，业务开发者无需编写任何 Listener 或 Mapper 代码。
+- 👥 **全维组织架构身份画像 (Multi-Dimensional UserProfile SPI)**：提供标准人事 SPI，让流程和大模型无缝感知发起人的部门、岗位、职务、职级与直属领导，支持跨部门差异化智能审批流转。
+- ⚡ **成功决策缓存与条件分支隔离 (ResolutionCache & 0 Token Fast-Path)**：
+  - **组织架构快照核验**：记录双方人员部门/岗位指纹与 7 天有效期，未变动时触发 0 Token 毫秒级极速复用；
+  - **条件分支指纹隔离**：针对“请假大于3天总经理审批，否则部门主管审批”等多分支场景，自动根据表单变量计算分支指纹，彻底杜绝不同额度/天数单据缓存串用。
 - 🤝 **三元决策主体 (Three Decision Actors)**：
   - **Human（人工）**：分配至具体角色/用户，支持审批、驳回、转办与升级。
   - **Rule（规则）**：基于表单字段与流程变量进行确定性条件判断与自动分流。
@@ -37,9 +44,8 @@
   - **显式授权级别**：`ADVISORY`（仅建议）、`DELEGATED`（受权决策）、`AUTONOMOUS`（全权自主）。
   - **审计与制度依据**：每次 Agent 决策均记录推理摘要（Reasoning Summary）、佐证（Evidence）和制度条款（Policy References），绝不暴露难以审计的原始 LLM CoT。
   - **确定性降级 (Fallback)**：当 Agent 超出授权、置信度不足或决策异常时，自动平滑降级至指定人工节点。
-- 🔮 **流程静态预览 (Process Preview)**：在流程正式触发前，支持传入模拟表单数据，提前预判潜在路径、审批人、参与 Agent 及必要字段。
+- 🗄️ **极致无感持久化 (Zero-Config Persistence)**：应用启动自动初始化 5 张核心表，支持与业务同一本地事务（`@Transactional`）同生共死。
 - 🔌 **零厂商绑定 (Vendor-Neutral)**：核心领域模型零外部框架依赖（纯 Java 21 `record` 与 `sealed interface`），AI 能力与 LLM SDK（Spring AI / LangChain4j / 任意大模型）完全基于 SPI 解耦。
-- ⚡ **无缝集成 Spring Boot**：提供开箱即用的 `rillway-spring-boot-starter`，可轻松嵌入 RuoYi-Vue-Pro、Gongdu 等企业级后台系统。
 
 ---
 
@@ -180,7 +186,8 @@ private ProcessEngine processEngine;
 
 // 1. 组装表单数据
 ProcessContext context = ProcessContext.builder()
-    .variable("applicant", "张三")
+    .initiator("Alice")
+    .variable("applicant", "爱丽丝")
     .variable("item", "高性能研发服务器")
     .variable("amount", new BigDecimal("12000"))
     .build();
@@ -188,7 +195,7 @@ ProcessContext context = ProcessContext.builder()
 // 2. 发起流程并无感持久化 (自动创建 rillway_instance，遇人工节点自动生成 rillway_task)
 ProcessInstance instance = processEngine.start(
     purchaseDefinition, 
-    "PURCHASE_ORDER_20260818001", // 业务单据ID
+    "purchase_order:PO_20260818001", // 业务单据唯一标识
     context
 );
 ```
@@ -326,9 +333,11 @@ public class SystemIdentityAdapter implements IdentityService {
 }
 ```
 
-### 3. 大模型驱动的纯自然语言人员指派 (LLM + Tool Calling)
+---
 
-**告别死板复杂的伪表达式语法！** 在流程节点配置或自然语言生成中，直接填写人类大白话提示词：
+## 🤖 大模型驱动的纯自然语言人员指派 (LLM + Tool Calling)
+
+**彻底告别死板复杂的伪表达式语法！** 在流程节点配置或自然语言生成中，直接填写人类大白话提示词：
 
 ```java
 // 流程节点中直接写人类自然语言，大模型结合人事工具集自主推理！
@@ -339,31 +348,33 @@ public class SystemIdentityAdapter implements IdentityService {
 ```
 
 #### 大模型执行流程：
-1. **理解上下文意图**：大模型接收提示词 `"让申请人的直属领导审批"` 与表单上下文 `{ initiator: "Alice", dept: "IT" }`；
-2. **自主 Tool Calling**：大模型决定调用工具 `getDirectLeader("Alice")`；
+1. **理解上下文意图**：大模型接收提示词 `"让申请人的直属领导审批"` 与表单上下文 `{ initiator: "Alice", dept: "DEPT_RD" }`；
+2. **自主 Tool Calling**：大模型决定调用工具 `getDirectLeader("Alice")` 或 `getUserProfile("Alice")`；
 3. **返回真实人员**：组织架构接口返回 `"Manager_Bob"`，大模型精准完成人员指派并生成待办 Task！
 
 ---
 
-### 4. 成功流程决策缓存与条件分支隔离 (Snapshot-based Cache with Branch Isolation)
+## ⚡ 成功流程决策缓存与条件分支隔离 (ResolutionCache)
 
-针对提示词中包含**业务条件分支**的场景（例如：*“请假大于3天由总经理审批，否则部门负责人审批”*），Rillway 引入了**条件分支指纹（`condition_branch_key`）槽位隔离机制**：
+为了大幅节省大模型 Token 成本并提升审批流转性能，Rillway 实现了**基于组织架构快照与条件分支指纹隔离的决策缓存机制**（`rillway_resolution_cache`）：
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
 │  提示词: "如果请假天数大于3天由总经理审批，否则由部门负责人审批"        │
 │                                                                        │
 │  • Alice 请假 1 天 (leaveDays=1)                                       │
-│    -> 提取分支: leaveDays<=3，指派部门主管，写入槽位 [leaveDays<=3]    │
+│    -> 提取分支指纹: leaveDays<=3，指派部门主管，写入槽位 [leaveDays<=3] │
 │  • Bob 请假 5 天 (leaveDays=5)                                         │
-│    -> 提取分支: leaveDays>3，绝不误用 1 天的缓存！指派总经理并独立缓存 │
-│  • Alice 再次请假 2 天 -> 0 Token 命中槽位 [leaveDays<=3] (部门主管)   │
-│  • Bob 再次请假 10 天  -> 0 Token 命中槽位 [leaveDays>3] (总经理)       │
+│    -> 提取分支指纹: leaveDays>3，绝不误用 1 天的缓存！指派总经理并独立缓存 │
+│  • Alice 再次请假 2 天 -> 0 Token 毫秒级命中槽位 [leaveDays<=3] (主管)  │
+│  • Bob 再次请假 10 天  -> 0 Token 毫秒级命中槽位 [leaveDays>3] (总经理) │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **分支槽位隔离**：表单数据不同条件分支落入不同的缓存槽位，彻底杜绝小额/短假单缓存污染大额/长假单的问题；
-- **90%+ Token 节省**：同分支单据在 7 天有效期内且人员部门未变动时直接 0 Token 毫秒级复用；
+- **组织架构快照核验 (Snapshot Verification)**：
+  缓存记录发起人与审批人双方的部门/岗位指纹与 7 天有效期。流转时仅需客观比对双方人事状态是否发生变动，**不依赖任何脆弱的 Prompt 关键词硬编码**！
+- **条件分支指纹隔离 (Branch Fingerprint Isolation)**：
+  自动根据表单变量提取 `conditionBranchKey`（如 `leaveDays<=3` 与 `leaveDays>3`），不同条件分支落入独立缓存槽位，**彻底消除不同额度/天数单据串用缓存的重大风险**！
 - **企业最佳实践推荐**：
   - **显式流程规则分流**：对于硬性制度红线（如报销额度、假期间隔），推荐直接在流程图中使用 `.edge("start", "gm-approval", ctx -> ctx.getInt("days") > 3)`，可视化度与可解释性最高；
   - **AI 动态分支隔离**：对于自然语言动态策略，Rillway 自动计算分支指纹安全隔离。
@@ -374,7 +385,12 @@ public class SystemIdentityAdapter implements IdentityService {
 
 Rillway 专为企业中台（如 `gongdu-base`、`ruoyi-vue-pro`）设计了自适应无感持久化：
 
-- **自动建表 (Auto DDL)**：应用启动检测到数据库连接池，自动初始化 3 张极简核心表（`rillway_instance`, `rillway_task`, `rillway_history`），全面兼容 MySQL / PostgreSQL / Oracle / H2 / SQLite 等；
+- **自动建表 (Auto DDL)**：应用启动检测到数据库连接池，自动初始化 5 张极简核心表：
+  1. `rillway_instance`：流程实例与上下文快照
+  2. `rillway_task`：人工待办与候选人任务
+  3. `rillway_history`：执行历史轨迹与审计事件
+  4. `rillway_binding_config`：零代码业务单据绑定表
+  5. `rillway_resolution_cache`：大模型决策快照与分支缓存表
 - **零 ORM 侵入**：底层基于 Spring 标准 `JdbcTemplate`，不与业务现有的 MyBatis-Plus / JPA 冲突；
 - **事务同生共死**：天然参与 Spring `@Transactional`，业务单据插入与流程实例落库在同一本地事务中，彻底消除分布式事务痛点；
 - **自适应降级**：无数据库环境（如纯单测）自动降级为 InMemory 模式，开箱即跑。
@@ -385,46 +401,47 @@ Rillway 专为企业中台（如 `gongdu-base`、`ruoyi-vue-pro`）设计了自�
 
 ```text
 rillway
-├── rillway-core                       # 纯 Java 领域模型 (ProcessDefinition, Node, Decision, Authority, Validator)
-├── rillway-runtime                    # 工作流核心引擎 (ProcessEngine, NodeExecutor, Context, PathResolver)
-├── rillway-ai                         # 自然语言意图解析 SPI (IntentInterpreter, ProcessIntent)
+├── rillway-core                       # 纯 Java 领域模型 (ProcessDefinition, Node, Decision, Authority, UserProfile)
+├── rillway-runtime                    # 工作流核心引擎 (ProcessEngine, NodeExecutor, Context, TaskService)
+├── rillway-ai                         # 大模型驱动人员解析、ResolutionCache 缓存与 Tool Calling SPI
 ├── rillway-agent                      # Agent 抽象、Registry、Authority 守卫与 Fallback
 ├── rillway-policy                     # 企业制度策略 SPI (Policy, PolicyProvider)
 ├── rillway-audit                      # 结构化审计流 (AuditEvent, AuditSink, InMemoryAuditSink)
-├── rillway-spring-boot-autoconfigure  # Spring Boot 3 自动配置
+├── rillway-spring-boot-autoconfigure  # Spring Boot 3 自动配置 (自动建表、JDBC 仓储、状态回写)
 ├── rillway-spring-boot-starter        # 快速集成 Starter
-└── rillway-example                    # 采购审批等经典企业实战 Demo
+└── rillway-example                    # 采购审批、零代码单据回写、大模型快照缓存等全套实战 Demo
 ```
 
 ---
 
 ## 🗺️ 演进路线 (Roadmap)
 
-- [x] **Phase 1: 核心框架初始化 (Current)**
+- [x] **Phase 1: 核心框架与治理体系**
   - 纯 Java 21 不可变领域模型设计（`sealed interface` + `record`）
   - 核心 Runtime 流程推进引擎与 `NodeExecutor`
   - Agent 权限守卫（`ADVISORY` / `DELEGATED` / `AUTONOMOUS`）与越权拦截
   - 企业 Policy 与 Audit 审计事件 SPI
-  - Spring Boot 3 Starter 自动装配与 Purchase Example
-- [ ] **Phase 2: AI 意图与生态集成**
-  - 基于 Spring AI / LangChain4j 的 `IntentInterpreter` 原生适配
-  - 自然语言动态生成与补全 `ProcessDefinition`
-  - 策略知识库（Policy RAG）标准集成组件
-- [ ] **Phase 3: 持久化与企业级特性**
-  - 流程状态持久化 SPI（JDBC / MyBatis-Plus / Redis）
-  - 分布式异步任务执行与超时重试
-  - 流程热更新与版本演进控制
+- [x] **Phase 2: 企业中台无感集成与零代码绑定**
+  - 自动建表与自适应 JDBC 事务同生共死持久化
+  - `TaskService` 待办与已办任务中心
+  - `rillway_binding_config` 零代码业务单据状态自动回写器
+  - `UserProfile` 发起人全维组织架构画像 SPI
+- [x] **Phase 3: AI-Native 智能调度与决策缓存**
+  - 大模型驱动的纯自然语言人员指派（LLM + Tool Calling）
+  - 组织架构快照客观核验（Snapshot-based Verification & 7天 TTL）
+  - 自然语言条件分支指纹隔离机制（`condition_branch_key`）
+  - 0 Token 毫秒级 Fast-Path 极速通道与自愈能力
 - [ ] **Phase 4: 可视化与监控**
   - 流程运行轨迹与 Agent 决策解释可视化组件
-  - 与 RuoYi-Vue-Pro 等开源管理后台开箱即用集成
+  - 与 RuoYi-Vue-Pro / Gongdu 等开源管理后台前端一键集成
 
 ---
 
 ## 📌 项目状态 (Status)
 
 > [!NOTE]
-> Rillway 目前处于 **Early Development (初期孵化与快速迭代)** 阶段。  
-> 我们的目标是探索 **AI 原生时代的人机协同流程范式**，而不是完全替代传统的重型 BPMN 引擎。欢迎提交 Issue、PR 或加入讨论！
+> Rillway 目前处于 **Active Fast Evolution (活跃演进)** 阶段。  
+> 我们的目标是探索 **AI 原生时代的人机协同流程范式**，打造极简、高效、与 Spring Boot 中台零摩擦融合的工作流引擎。欢迎提交 Issue、PR 或加入讨论！
 
 ---
 
