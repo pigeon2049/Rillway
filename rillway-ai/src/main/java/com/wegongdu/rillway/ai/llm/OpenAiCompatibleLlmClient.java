@@ -45,7 +45,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(timeout != null ? timeout : Duration.ofSeconds(30))
                 .build();
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = new ObjectMapper().findAndRegisterModules();
         this.traceSink = traceSink;
     }
 
@@ -138,10 +138,16 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 // 2. Tool response messages
                 for (ToolResult tr : toolResults) {
                     String contentStr;
-                    if (tr.result() instanceof String s) {
+                    Object resObj = tr.result();
+                    if (resObj instanceof Optional<?> opt) {
+                        resObj = opt.orElse(null);
+                    }
+                    if (resObj instanceof String s) {
                         contentStr = s;
+                    } else if (resObj == null) {
+                        contentStr = "null";
                     } else {
-                        contentStr = objectMapper.writeValueAsString(tr.result());
+                        contentStr = objectMapper.writeValueAsString(resObj);
                     }
                     messages.add(Map.of(
                             "role", "tool",
@@ -279,9 +285,22 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             functionMap.put("name", tool.name());
             functionMap.put("description", tool.description());
 
+            Map<String, Object> properties = new LinkedHashMap<>();
+            if (tool.parametersSchema() != null) {
+                for (Map.Entry<String, Object> entry : tool.parametersSchema().entrySet()) {
+                    if (entry.getValue() instanceof Map<?, ?> mapVal) {
+                        properties.put(entry.getKey(), mapVal);
+                    } else if (entry.getValue() instanceof String typeStr) {
+                        properties.put(entry.getKey(), Map.of("type", typeStr));
+                    } else {
+                        properties.put(entry.getKey(), Map.of("type", "string"));
+                    }
+                }
+            }
+
             Map<String, Object> parameters = new LinkedHashMap<>();
             parameters.put("type", "object");
-            parameters.put("properties", tool.parametersSchema() != null ? tool.parametersSchema() : Map.of());
+            parameters.put("properties", properties);
             functionMap.put("parameters", parameters);
 
             tools.add(Map.of(
