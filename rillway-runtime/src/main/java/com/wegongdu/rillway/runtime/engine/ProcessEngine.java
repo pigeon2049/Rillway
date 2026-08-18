@@ -10,7 +10,11 @@ import com.wegongdu.rillway.core.instance.ProcessInstance;
  */
 public interface ProcessEngine {
 
-    ProcessInstance start(ProcessDefinition definition, ProcessContext context);
+    default ProcessInstance start(ProcessDefinition definition, ProcessContext context) {
+        return start(definition, null, context);
+    }
+
+    ProcessInstance start(ProcessDefinition definition, String businessKey, ProcessContext context);
 
     ProcessInstance resume(ProcessInstance instance, Decision decision);
 }

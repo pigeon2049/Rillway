@@ -171,25 +171,61 @@ ProcessDefinition definition = ProcessDefinition.builder("purchase-process")
     .build();
 ```
 
-### 3. 启动与推进流程
+### 3. 启动流程与待办审批 (极简无感)
 
+#### 发起审批并绑定业务单据 ID (businessKey)
 ```java
 @Autowired
 private ProcessEngine processEngine;
 
-// 1. 发起流程
+// 1. 组装表单数据
 ProcessContext context = ProcessContext.builder()
     .variable("applicant", "张三")
     .variable("item", "高性能研发服务器")
     .variable("amount", new BigDecimal("12000"))
     .build();
 
-ProcessInstance instance = processEngine.start(definition, context);
-
-// 2. 查看流转状态
-System.out.println("当前节点: " + instance.currentNodeId());
-System.out.println("流程状态: " + instance.status());
+// 2. 发起流程并无感持久化 (自动创建 rillway_instance，遇人工节点自动生成 rillway_task)
+ProcessInstance instance = processEngine.start(
+    purchaseDefinition, 
+    "PURCHASE_ORDER_20260818001", // 业务单据ID
+    context
+);
 ```
+
+#### 查询当前用户的待办任务列表 (TaskService)
+```java
+@Autowired
+private TaskService taskService;
+
+// 查询当前用户的待办 (按 userId 与所拥有角色自动精确过滤)
+List<Task> pendingTasks = taskService.findPendingTasks(currentUserId, currentUserRoles);
+for (Task task : pendingTasks) {
+    System.out.println("待办ID: " + task.id());
+    System.out.println("单据编号: " + task.businessKey());
+    System.out.println("审批节点: " + task.nodeName());
+}
+```
+
+#### 用户审批通过 / 驳回
+```java
+// 一行代码完成：加载实例 -> 驱动流程 -> 任务标为已办 -> 更新数据库与审计轨迹
+taskService.completeTask(
+    taskId,
+    ApproveDecision.of(Actor.HumanActor.of(currentUserId, "DEPARTMENT_MANAGER"), "核验无误，同意采购")
+);
+```
+
+---
+
+## 🗄️ 极致无感持久化 (Zero-Config Persistence)
+
+Rillway 专为企业中台（如 `gongdu-base`、`ruoyi-vue-pro`）设计了自适应无感持久化：
+
+- **自动建表 (Auto DDL)**：应用启动检测到数据库连接池，自动初始化 3 张极简核心表（`rillway_instance`, `rillway_task`, `rillway_history`），全面兼容 MySQL / PostgreSQL / Oracle / H2 / SQLite 等；
+- **零 ORM 侵入**：底层基于 Spring 标准 `JdbcTemplate`，不与业务现有的 MyBatis-Plus / JPA 冲突；
+- **事务同生共死**：天然参与 Spring `@Transactional`，业务单据插入与流程实例落库在同一本地事务中，彻底消除分布式事务痛点；
+- **自适应降级**：无数据库环境（如纯单测）自动降级为 InMemory 模式，开箱即跑。
 
 ---
 

@@ -1,5 +1,6 @@
 package com.wegongdu.rillway.autoconfigure;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wegongdu.rillway.agent.guard.AgentAuthorityGuard;
 import com.wegongdu.rillway.agent.registry.InMemoryAgentRegistry;
 import com.wegongdu.rillway.agent.spi.AgentRegistry;
@@ -8,6 +9,10 @@ import com.wegongdu.rillway.ai.intent.IntentInterpreter;
 import com.wegongdu.rillway.audit.sink.AuditSink;
 import com.wegongdu.rillway.audit.sink.InMemoryAuditSink;
 import com.wegongdu.rillway.audit.sink.NoOpAuditSink;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcExecutionHistoryRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcProcessInstanceRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.JdbcTaskRepository;
+import com.wegongdu.rillway.autoconfigure.persistence.RillwayDatabaseInitializer;
 import com.wegongdu.rillway.core.node.Node;
 import com.wegongdu.rillway.core.validation.ProcessValidator;
 import com.wegongdu.rillway.core.validation.StandardProcessValidator;
@@ -23,18 +28,36 @@ import com.wegongdu.rillway.runtime.executor.impl.RuleNodeExecutor;
 import com.wegongdu.rillway.runtime.executor.impl.StartNodeExecutor;
 import com.wegongdu.rillway.runtime.preview.ProcessPreviewer;
 import com.wegongdu.rillway.runtime.preview.StaticProcessPreviewer;
+import com.wegongdu.rillway.runtime.repository.ExecutionHistoryRepository;
+import com.wegongdu.rillway.runtime.repository.ProcessInstanceRepository;
+import com.wegongdu.rillway.runtime.repository.TaskRepository;
+import com.wegongdu.rillway.runtime.repository.memory.InMemoryExecutionHistoryRepository;
+import com.wegongdu.rillway.runtime.repository.memory.InMemoryProcessInstanceRepository;
+import com.wegongdu.rillway.runtime.repository.memory.InMemoryTaskRepository;
+import com.wegongdu.rillway.runtime.task.StandardTaskService;
+import com.wegongdu.rillway.runtime.task.TaskService;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import javax.sql.DataSource;
 import java.util.List;
 
 /**
  * Spring Boot 3 auto-configuration for Rillway workflow engine.
  */
-@AutoConfiguration
+@AutoConfiguration(after = {
+        DataSourceAutoConfiguration.class,
+        JdbcTemplateAutoConfiguration.class
+})
 @EnableConfigurationProperties(RillwayProperties.class)
 @ConditionalOnProperty(prefix = "rillway", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class RillwayAutoConfiguration {
@@ -119,13 +142,98 @@ public class RillwayAutoConfiguration {
         return new AgentNodeExecutor(agentRegistry, policyProvider, authorityGuard, auditSink);
     }
 
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass({JdbcTemplate.class, DataSource.class})
+    @ConditionalOnBean(DataSource.class)
+    static class JdbcPersistenceConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public RillwayDatabaseInitializer rillwayDatabaseInitializer(DataSource dataSource) {
+            return new RillwayDatabaseInitializer(new JdbcTemplate(dataSource), dataSource);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ExecutionHistoryRepository executionHistoryRepository(
+                DataSource dataSource,
+                ObjectMapper objectMapper,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcExecutionHistoryRepository(new JdbcTemplate(dataSource), objectMapper);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ProcessInstanceRepository processInstanceRepository(
+                DataSource dataSource,
+                ExecutionHistoryRepository historyRepository,
+                ObjectMapper objectMapper,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcProcessInstanceRepository(new JdbcTemplate(dataSource), historyRepository, objectMapper);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public TaskRepository taskRepository(
+                DataSource dataSource,
+                ObjectMapper objectMapper,
+                RillwayDatabaseInitializer initializer
+        ) {
+            return new JdbcTaskRepository(new JdbcTemplate(dataSource), objectMapper);
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class FallbackPersistenceConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ExecutionHistoryRepository executionHistoryRepository() {
+            return new InMemoryExecutionHistoryRepository();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ProcessInstanceRepository processInstanceRepository() {
+            return new InMemoryProcessInstanceRepository();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public TaskRepository taskRepository() {
+            return new InMemoryTaskRepository();
+        }
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TaskService taskService(
+            TaskRepository taskRepository,
+            ProcessInstanceRepository instanceRepository,
+            ProcessEngine processEngine
+    ) {
+        return new StandardTaskService(taskRepository, instanceRepository, processEngine);
+    }
+
     @Bean
     @ConditionalOnMissingBean
     public ProcessEngine processEngine(
             List<NodeExecutor<? extends Node>> executors,
             ProcessValidator validator,
-            AuditSink auditSink
+            AuditSink auditSink,
+            ProcessInstanceRepository instanceRepository,
+            TaskRepository taskRepository,
+            ExecutionHistoryRepository historyRepository
     ) {
-        return new StandardProcessEngine(executors, validator, auditSink);
+        return new StandardProcessEngine(
+                executors,
+                validator,
+                auditSink,
+                instanceRepository,
+                taskRepository,
+                historyRepository
+        );
     }
 }

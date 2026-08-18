@@ -15,6 +15,7 @@ import java.util.UUID;
  */
 public record ProcessInstance(
         String id,
+        String businessKey,
         String definitionId,
         ProcessStatus status,
         String currentNodeId,
@@ -39,8 +40,13 @@ public record ProcessInstance(
     }
 
     public static ProcessInstance create(String definitionId, String startNodeId, ProcessContext context) {
+        return create(definitionId, null, startNodeId, context);
+    }
+
+    public static ProcessInstance create(String definitionId, String businessKey, String startNodeId, ProcessContext context) {
         return new ProcessInstance(
                 UUID.randomUUID().toString(),
+                businessKey,
                 definitionId,
                 ProcessStatus.RUNNING,
                 startNodeId,
@@ -55,6 +61,7 @@ public record ProcessInstance(
     public ProcessInstance withStatusAndNode(ProcessStatus newStatus, String newCurrentNodeId) {
         return new ProcessInstance(
                 id,
+                businessKey,
                 definitionId,
                 newStatus,
                 newCurrentNodeId,
@@ -71,6 +78,7 @@ public record ProcessInstance(
         newHistory.add(record);
         return new ProcessInstance(
                 id,
+                businessKey,
                 definitionId,
                 status,
                 currentNodeId,
@@ -85,6 +93,7 @@ public record ProcessInstance(
     public ProcessInstance withUpdatedContext(ProcessContext newContext) {
         return new ProcessInstance(
                 id,
+                businessKey,
                 definitionId,
                 status,
                 currentNodeId,
@@ -99,6 +108,7 @@ public record ProcessInstance(
     public ProcessInstance failed(String errorMessage) {
         return new ProcessInstance(
                 id,
+                businessKey,
                 definitionId,
                 ProcessStatus.FAILED,
                 currentNodeId,

@@ -6,6 +6,9 @@ import com.wegongdu.rillway.audit.sink.AuditSink;
 import com.wegongdu.rillway.policy.spi.PolicyProvider;
 import com.wegongdu.rillway.runtime.engine.ProcessEngine;
 import com.wegongdu.rillway.runtime.preview.ProcessPreviewer;
+import com.wegongdu.rillway.runtime.repository.ProcessInstanceRepository;
+import com.wegongdu.rillway.runtime.repository.TaskRepository;
+import com.wegongdu.rillway.runtime.task.TaskService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -28,6 +31,9 @@ class RillwayAutoConfigurationTest {
             assertThat(context).hasSingleBean(AuditSink.class);
             assertThat(context).hasSingleBean(ProcessPreviewer.class);
             assertThat(context).hasSingleBean(IntentInterpreter.class);
+            assertThat(context).hasSingleBean(ProcessInstanceRepository.class);
+            assertThat(context).hasSingleBean(TaskRepository.class);
+            assertThat(context).hasSingleBean(TaskService.class);
         });
     }
 
@@ -37,6 +43,7 @@ class RillwayAutoConfigurationTest {
         contextRunner.withPropertyValues("rillway.enabled=false")
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(ProcessEngine.class);
+                    assertThat(context).doesNotHaveBean(TaskService.class);
                 });
     }
 }
