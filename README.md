@@ -35,9 +35,9 @@
 
 ---
 
-## 🚀 3 分钟端到端快速上手
+## 🚀 正常接入步骤 (5步极速上手)
 
-只需要简单的 **3 步**，即可完成全套 AI 审批流程接入：
+遵循标准工程实践，只需 **5 步** 即可在你的业务工程中跑通完整的 AI 审批流：
 
 ### 第 1 步：引入 Maven 依赖 (JitPack)
 
@@ -62,8 +62,11 @@
 </dependencies>
 ```
 
+---
+
 ### 第 2 步：配置大模型与追踪参数 (`application.yml`)
-在配置文件中填入大模型连接信息（天然兼容 DeepSeek、通义千问、OpenAI、Ollama 等任何 OpenAI 兼容协议接口）：
+
+在配置文件中填入大模型连接信息（天然兼容 DeepSeek、通义千问、OpenAI、Ollama 等任何 OpenAI 协议接口）：
 
 ```yaml
 rillway:
@@ -71,9 +74,9 @@ rillway:
   ai:
     openai:
       enabled: true
-      base-url: https://api.deepseek.com/v1   # 或 https://dashscope.aliyuncs.com/compatible-mode/v1 等
+      base-url: https://api.deepseek.com/v1   # 或阿里云 DashScope / 微软 Azure 接口
       api-key: sk-your-api-key-here           # 你的 API Key
-      model: deepseek-chat                    # 模型名称 (如 deepseek-chat, qwen-plus, gpt-4o-mini)
+      model: deepseek-chat                    # 调用的模型名称 (如 deepseek-chat, qwen-plus)
       temperature: 0.1
       timeout-seconds: 30
     trace:
@@ -83,8 +86,73 @@ rillway:
 ```
 > 💡 **提示**：也可以不写在 yml 里，直接向数据库表 `rillway_ai_config` 插入记录实现热插拔免重启。
 
-### 第 3 步：配置自然语言审批制度与状态回写 (`rillway_binding_config`)
-应用启动会自动初始化该表。向表中配置你的**自然语言制度**与**绑定的单据表名**：
+---
+
+### 第 3 步：对接企业组织架构与人员服务 (`IdentityService` SPI)
+
+大模型在理解审批制度时，需要知道“申请人直属领导是谁”、“研发总监是谁”。
+在业务系统中实现 `IdentityService` 并注册为 Spring `@Service`，大模型将通过 **Tool Calling 自动调用该接口获取人员数据**：
+
+```java
+@Service
+public class EnterpriseIdentityService implements IdentityService {
+
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private DeptMapper deptMapper;
+
+    // 1. 获取用户完整组织画像（部门ID、岗位、直属领导ID等）
+    @Override
+    public Optional<UserProfile> getUserProfile(String userId) {
+        SysUser user = userMapper.selectById(userId);
+        if (user == null) return Optional.empty();
+
+        return Optional.of(UserProfile.builder(userId)
+                .username(user.getNickname())
+                .departmentId(String.valueOf(user.getDeptId()))
+                .departmentName(user.getDeptName())
+                .directLeaderId(String.valueOf(user.getLeaderId()))
+                .roles(user.getRoleKeys())
+                .build());
+    }
+
+    // 2. 查询申请人的直属上级领导 ID
+    @Override
+    public Optional<String> getDirectLeader(String userId) {
+        return Optional.ofNullable(userMapper.selectLeaderIdByUserId(userId));
+    }
+
+    // 3. 查询指定部门的主管 / 部门经理 ID
+    @Override
+    public Optional<String> getDepartmentManager(String departmentId) {
+        return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
+    }
+
+    // 4. 根据角色或岗位查询人员列表（如 'FINANCE_DIRECTOR'）
+    @Override
+    public List<String> getUsersByRole(String roleCode) {
+        return userMapper.selectUserIdsByRole(roleCode);
+    }
+
+    @Override
+    public List<String> getUsersByDepartment(String departmentId) {
+        return userMapper.selectUserIdsByDeptId(departmentId);
+    }
+
+    @Override
+    public List<String> getUsersByPost(String postCode) {
+        return userMapper.selectUserIdsByPostCode(postCode);
+    }
+}
+```
+> 💡 **零配置默认兜底**：若业务工程未提供自定义 `IdentityService`，Rillway 会自动启用内存版 `DefaultIdentityService`，单测与本地开发开箱即用。
+
+---
+
+### 第 4 步：配置自然语言审批制度与状态回写 (`rillway_binding_config`)
+
+应用启动时会自动检测并初始化该表。向表中配置你的**自然语言制度**与**绑定的单据表名**：
 
 ```sql
 INSERT INTO rillway_binding_config (
@@ -111,7 +179,9 @@ INSERT INTO rillway_binding_config (
 );
 ```
 
-### 第 4 步：定义业务实体 Bean 并直接发起流程
+---
+
+### 第 5 步：定义业务实体 Bean 并直接发起流程
 
 #### ① 实体类定义（直接复用业务 Bean + 注解增强）
 ```java
@@ -210,7 +280,7 @@ rillway:
 #### 痛点对比：传统工作流 vs Rillway
 | 对比维度 | 传统工作流 (Flowable / Activiti) | ⚡ Rillway AI 原生引擎 |
 | :--- | :--- | :--- |
-| **状态同步方式** | 必须编写 `JavaDelegate` / `ExecutionListener` 注入业务 Mapper 手动 `updateById()` | **零代码配置驱动**，配置表指定 `status_column` 即可 |
+| **状态同步方式** | 必须编写 `JavaDelegate` / `ExecutionListener` 注入业务 Mapper 手动调用 `updateById()` | **零代码配置驱动**，配置表指定 `status_column` 即可 |
 | **事务一致性** | 流程引擎库与业务库分离，极易产生**流程走完但业务单据状态未更新**的分布式事务脏数据 | **本地事务原子绑定**，共享 Spring `DataSourceTransactionManager`，同生共死 |
 | **代码侵入性** | 业务代码与流程 API 强耦合，充斥大量 `runtimeService` 与各种监听器模板代码 | **零侵入**，业务单据只有普通的 JavaBean，完全感知不到工作流框架存在 |
 
@@ -287,69 +357,7 @@ public class PurchaseOrderEventListener {
 
 ---
 
-### 6. 对接企业组织架构与人员服务 (`IdentityService` SPI)
-
-大模型如何精准识别“申请人直属领导”、“研发部门经理”、“财务总监”？
-只需在业务系统中实现 `IdentityService` 接口并注册为 Spring Bean，大模型将通过 **Tool Calling 自动调用该接口获取人员信息**：
-
-```java
-@Service
-public class EnterpriseIdentityService implements IdentityService {
-
-    @Autowired
-    private UserMapper userMapper;
-    @Autowired
-    private DeptMapper deptMapper;
-
-    // 1. 获取用户完整组织画像（部门、岗位、直属上级ID）
-    @Override
-    public Optional<UserProfile> getUserProfile(String userId) {
-        SysUser user = userMapper.selectById(userId);
-        if (user == null) return Optional.empty();
-
-        return Optional.of(UserProfile.builder(userId)
-                .username(user.getNickname())
-                .departmentId(String.valueOf(user.getDeptId()))
-                .departmentName(user.getDeptName())
-                .directLeaderId(String.valueOf(user.getLeaderId()))
-                .roles(user.getRoleKeys())
-                .build());
-    }
-
-    // 2. 查询申请人的直属领导 ID
-    @Override
-    public Optional<String> getDirectLeader(String userId) {
-        return Optional.ofNullable(userMapper.selectLeaderIdByUserId(userId));
-    }
-
-    // 3. 查询指定部门的负责人 / 总监 ID
-    @Override
-    public Optional<String> getDepartmentManager(String departmentId) {
-        return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
-    }
-
-    // 4. 根据角色或岗位查询人员列表（如 'FINANCE_DIRECTOR'）
-    @Override
-    public List<String> getUsersByRole(String roleCode) {
-        return userMapper.selectUserIdsByRole(roleCode);
-    }
-
-    @Override
-    public List<String> getUsersByDepartment(String departmentId) {
-        return userMapper.selectUserIdsByDeptId(departmentId);
-    }
-
-    @Override
-    public List<String> getUsersByPost(String postCode) {
-        return userMapper.selectUserIdsByPostCode(postCode);
-    }
-}
-```
-> 💡 **零配置默认兜底**：若业务系统未提供自定义 `IdentityService`，Rillway 会自动启用内存版 `DefaultIdentityService`，单测与本地开发开箱即用。
-
----
-
-### 7. 企业级边界与运维处理
+### 6. 企业级边界与运维处理
 
 - **终审节点感知**：
   ```java

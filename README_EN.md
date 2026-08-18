@@ -35,9 +35,9 @@ Traditional workflow engines (Activiti, Flowable, Camunda) introduce friction in
 
 ---
 
-## 🚀 3-Minute End-to-End Quick Start
+## 🚀 Step-by-Step Integration (5-Step Quick Start)
 
-Integrate an AI-driven approval workflow in just **3 simple steps**:
+Follow standard software engineering practices to get an AI workflow running in **5 simple steps**:
 
 ### Step 1: Add Maven Dependency (via JitPack)
 
@@ -62,7 +62,10 @@ Add the JitPack repository and Starter dependency to your project's `pom.xml`:
 </dependencies>
 ```
 
+---
+
 ### Step 2: Configure LLM & Tracing (`application.yml`)
+
 Configure your OpenAI-compatible LLM endpoint (DeepSeek, Qwen, Azure OpenAI, Ollama, etc.):
 
 ```yaml
@@ -83,7 +86,72 @@ rillway:
 ```
 > 💡 **Tip**: You can also insert configs directly into database table `rillway_ai_config` for zero-deployment hot swapping.
 
-### Step 3: Configure Natural Language Policy & Status Binding (`rillway_binding_config`)
+---
+
+### Step 3: Connect Enterprise Org & Personnel (`IdentityService` SPI)
+
+When interpreting approval policies, LLMs need to know "who is the applicant's manager" or "who is the department head".
+Simply implement the `IdentityService` interface in your Spring Boot application. The LLM will **automatically query your organization and user tables via Tool Calling**:
+
+```java
+@Service
+public class EnterpriseIdentityService implements IdentityService {
+
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private DeptMapper deptMapper;
+
+    // 1. Get complete user profile (department, job position, leader ID)
+    @Override
+    public Optional<UserProfile> getUserProfile(String userId) {
+        SysUser user = userMapper.selectById(userId);
+        if (user == null) return Optional.empty();
+
+        return Optional.of(UserProfile.builder(userId)
+                .username(user.getNickname())
+                .departmentId(String.valueOf(user.getDeptId()))
+                .departmentName(user.getDeptName())
+                .directLeaderId(String.valueOf(user.getLeaderId()))
+                .roles(user.getRoleKeys())
+                .build());
+    }
+
+    // 2. Query applicant's direct manager user ID
+    @Override
+    public Optional<String> getDirectLeader(String userId) {
+        return Optional.ofNullable(userMapper.selectLeaderIdByUserId(userId));
+    }
+
+    // 3. Query department manager / director ID
+    @Override
+    public Optional<String> getDepartmentManager(String departmentId) {
+        return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
+    }
+
+    // 4. Query user IDs by role or post (e.g. 'FINANCE_DIRECTOR')
+    @Override
+    public List<String> getUsersByRole(String roleCode) {
+        return userMapper.selectUserIdsByRole(roleCode);
+    }
+
+    @Override
+    public List<String> getUsersByDepartment(String departmentId) {
+        return userMapper.selectUserIdsByDeptId(departmentId);
+    }
+
+    @Override
+    public List<String> getUsersByPost(String postCode) {
+        return userMapper.selectUserIdsByPostCode(postCode);
+    }
+}
+```
+> 💡 **Out-of-the-Box Fallback**: If no custom `IdentityService` is registered, Rillway automatically uses `DefaultIdentityService` for painless unit testing and local development.
+
+---
+
+### Step 4: Configure Natural Language Policy & Status Binding (`rillway_binding_config`)
+
 The table is automatically initialized on application startup. Insert your **natural language policy** and **table binding**:
 
 ```sql
@@ -111,7 +179,9 @@ INSERT INTO rillway_binding_config (
 );
 ```
 
-### Step 4: Define Domain Bean & Launch Workflow
+---
+
+### Step 5: Define Domain Bean & Launch Workflow
 
 #### ① Domain Entity Definition (Reuse Domain Bean + Annotation Extensions)
 ```java
@@ -288,69 +358,7 @@ public class PurchaseOrderEventListener {
 
 ---
 
-### 6. Connecting Enterprise Org & Personnel (`IdentityService` SPI)
-
-How does the LLM accurately identify "applicant's direct manager", "R&D department director", or "CFO"?
-Simply implement the `IdentityService` interface in your Spring Boot application. The LLM will **automatically query your organization and user tables via Tool Calling**:
-
-```java
-@Service
-public class EnterpriseIdentityService implements IdentityService {
-
-    @Autowired
-    private UserMapper userMapper;
-    @Autowired
-    private DeptMapper deptMapper;
-
-    // 1. Get complete user profile (department, job position, leader ID)
-    @Override
-    public Optional<UserProfile> getUserProfile(String userId) {
-        SysUser user = userMapper.selectById(userId);
-        if (user == null) return Optional.empty();
-
-        return Optional.of(UserProfile.builder(userId)
-                .username(user.getNickname())
-                .departmentId(String.valueOf(user.getDeptId()))
-                .departmentName(user.getDeptName())
-                .directLeaderId(String.valueOf(user.getLeaderId()))
-                .roles(user.getRoleKeys())
-                .build());
-    }
-
-    // 2. Query applicant's direct manager user ID
-    @Override
-    public Optional<String> getDirectLeader(String userId) {
-        return Optional.ofNullable(userMapper.selectLeaderIdByUserId(userId));
-    }
-
-    // 3. Query department manager / director ID
-    @Override
-    public Optional<String> getDepartmentManager(String departmentId) {
-        return Optional.ofNullable(deptMapper.selectLeaderIdByDeptId(departmentId));
-    }
-
-    // 4. Query user IDs by role or post (e.g. 'FINANCE_DIRECTOR')
-    @Override
-    public List<String> getUsersByRole(String roleCode) {
-        return userMapper.selectUserIdsByRole(roleCode);
-    }
-
-    @Override
-    public List<String> getUsersByDepartment(String departmentId) {
-        return userMapper.selectUserIdsByDeptId(departmentId);
-    }
-
-    @Override
-    public List<String> getUsersByPost(String postCode) {
-        return userMapper.selectUserIdsByPostCode(postCode);
-    }
-}
-```
-> 💡 **Out-of-the-Box Fallback**: If no custom `IdentityService` is registered, Rillway automatically uses `DefaultIdentityService` for painless unit testing and local development.
-
----
-
-### 7. Enterprise Edge Cases & Operations
+### 6. Enterprise Edge Cases & Operations
 
 - **Terminal Node Detection**:
   ```java
